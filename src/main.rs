@@ -17,8 +17,42 @@ use std::path::{PathBuf};
 use dirs;
 use ureq::Agent;
 use include_dir::{include_dir, Dir};
+use clap::{Parser, Subcommand};
 
 static MOON_PHASE_ART_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/moon-phase-art");
+
+
+#[derive(Parser, Debug)]
+#[command(version, about = "A free, simple weather TUI that pulls data without the need for an API key, account, or subscription ")]
+struct Args {
+    #[command(subcommand)]
+    command: Command
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Allows you to edit a configuration setting
+    Edit {
+        /// Your current timezone (e.g. America/Chicago, America/New_York, etc)
+        #[clap(short, long)]
+        timezone: Option<String>,
+        
+        /// Latitude (e.g. 35.9295) 
+        #[clap(short, long)]
+        lat: Option<String>,
+
+        /// Longitude (e.g. -83.8906)
+        #[clap(short='o', long)]
+        long: Option<String>,
+
+        /// Your County/Zone code as specified by NOAA (e.g. TNZ069 - More info here: https://wiki.weather-watch.com/index.php/NOAA_US_County_and_Zone_Codes )
+        #[clap(short, long)]
+        zone: Option<String>
+    }
+}
+
+
+
 
 /// Single day of weather forecast from NWS
 #[derive(Serialize, Deserialize, Debug)]
@@ -511,6 +545,10 @@ fn main() -> io::Result<()> {
     }
 
     let _ = dotenv::from_path(&file).expect("Could not find .env file");
+
+
+    let args = Args::parse();
+    //dbg!(args);
 
     let data = include_str!("./weather-codes.json");
     let weather_codes: serde_json::Value = serde_json::from_str(&data).expect("JSON was malformed");
