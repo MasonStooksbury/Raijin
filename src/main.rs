@@ -2,6 +2,7 @@ use dotenv;
 use serde::{Serialize, Deserialize};
 use urlencoding::encode;
 use std::{fs, io, env};
+use std::collections::HashMap;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -23,14 +24,14 @@ static MOON_PHASE_ART_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/moon-phas
 
 
 #[derive(Parser, Debug)]
-#[command(version, about = "A free, simple weather TUI that pulls data without the need for an API key, account, or subscription ")]
+#[command(version, about = "A free, simple weather TUI that pulls data without the need for an API key, account, or subscription")]
 struct Args {
     #[command(subcommand)]
-    command: Command
+    command: Option<Commands>
 }
 
 #[derive(Subcommand, Debug)]
-enum Command {
+enum Commands {
     /// Allows you to edit a configuration setting
     Edit {
         /// Your current timezone (e.g. America/Chicago, America/New_York, etc)
@@ -45,6 +46,10 @@ enum Command {
         #[clap(short='o', long)]
         long: Option<String>,
 
+        /// Your State code (e.g. TN, KY, PA)
+        #[clap(short, long)]
+        state: Option<String>,
+
         /// Your County/Zone code as specified by NOAA (e.g. TNZ069 - More info here: https://wiki.weather-watch.com/index.php/NOAA_US_County_and_Zone_Codes )
         #[clap(short, long)]
         zone: Option<String>
@@ -52,6 +57,15 @@ enum Command {
 }
 
 
+/// Configuration Parameters
+#[derive(Debug)]
+struct ConfigParams {
+    timezone: Option<String>,
+    lat: Option<String>,
+    long: Option<String>,
+    state: Option<String>,
+    zone: Option<String>
+}
 
 
 /// Single day of weather forecast from NWS
@@ -524,14 +538,9 @@ fn get_moon_phases(agent: &Agent, date: String) -> Result<Vec<MoonPhase>, ureq::
     return Ok(moon_phases);
 }
 
-
-
-
-
-fn main() -> io::Result<()> {
-    let folder: PathBuf = dirs::home_dir()
-        .expect("Could not find home directory")
-        .join(".config")
+fn configure() -> Result<(), Box<dyn std::error::Error>> {
+    let folder: PathBuf = dirs::config_dir()
+        .expect("configure - Could not find config directory")
         .join("Raijin");
 
     let file = folder.join(".env");
@@ -544,11 +553,86 @@ fn main() -> io::Result<()> {
         fs::write(&file, "ZONE=\"TNZ069\"\nSTATE=\"TN\"\nLATITUDE=\"35.9626444\"\nLONGITUDE=\"-83.9167239\"\nTIMEZONE=\"America/New_York\"\n")?;
     }
 
-    let _ = dotenv::from_path(&file).expect("Could not find .env file");
+    return Ok(());
+}
 
+
+/// Update config file with new values
+fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>> {
+    // This is all gross, but I don't really care and just want it to work
+    let original_timezone = env::var("TIMEZONE").unwrap().to_string();
+    let original_lat = env::var("LATITUDE").unwrap().to_string();
+    let original_long = env::var("LONGITUDE").unwrap().to_string();
+    let original_state = env::var("STATE").unwrap().to_string();
+    let original_zone = env::var("ZONE").unwrap().to_string();
+
+    let mut new_params = HashMap::new();
+
+    if !&params.timezone.is_some() {
+        new_params.insert("TIMEZONE", original_timezone);
+    } else {
+        new_params.insert("TIMEZONE", params.timezone.clone().unwrap().to_string());
+    }
+
+    if !&params.lat.is_some() {
+        new_params.insert("LAT", original_lat);
+    } else {
+        new_params.insert("LAT", params.lat.clone().unwrap().to_string());
+    }
+
+    if !&params.long.is_some() {
+        new_params.insert("LONG", original_long);
+    } else {
+        new_params.insert("LONG", params.long.clone().unwrap().to_string());
+    }
+
+    if !&params.state.is_some() {
+        new_params.insert("STATE", original_state);
+    } else {
+        new_params.insert("STATE", params.state.clone().unwrap().to_string());
+    }
+
+    if !&params.zone.is_some() {
+        new_params.insert("ZONE", original_zone);
+    } else {
+        new_params.insert("ZONE", params.zone.clone().unwrap().to_string());
+    }
+
+    let file: PathBuf = dirs::config_dir()
+        .expect("update_config - Could not find config directory")
+        .join("Raijin")
+        .join(".env");
+
+    let file_data = format!("ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\n", new_params["ZONE"], new_params["STATE"], new_params["LAT"], new_params["LONG"], new_params["TIMEZONE"]);
+    fs::write(&file, file_data)?;
+
+    Ok(())
+}
+
+
+
+fn main() -> io::Result<()> {
+    let _ = configure();
+    let file = dirs::config_dir().expect("main - Could not find config directory").join("Raijin").join(".env");
+    let _ = dotenv::from_path(&file).expect("main - Could not find .env file");
 
     let args = Args::parse();
-    //dbg!(args);
+
+    match &args.command {
+        Some(Commands::Edit { timezone, lat, long, state, zone }) => {
+            let config_params = ConfigParams {
+                timezone: timezone.clone(),
+                lat: lat.clone(),
+                long: long.clone(),
+                state: state.clone(),
+                zone: zone.clone()
+            };
+
+            let _ = update_config(config_params);
+            return Ok(());
+        },
+        None => {}
+    } 
 
     let data = include_str!("./weather-codes.json");
     let weather_codes: serde_json::Value = serde_json::from_str(&data).expect("JSON was malformed");
