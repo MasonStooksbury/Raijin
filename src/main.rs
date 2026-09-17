@@ -162,18 +162,10 @@ struct MoonPhase {
     illumination: String
 }
 
-/// Raw phase data from ViewBits
-#[derive(Serialize, Deserialize, Debug)]
-struct RawMoonPhaseData {
-    phases: Vec<MoonPhase>
-}
-
-
-
 
 
 /// Create the "Right Now" weather table
-fn create_right_now_table(forecast: &OpenMeteoForecast) -> Table {
+fn create_right_now_table(forecast: &OpenMeteoForecast) -> Table<'_> {
     let widths = [
         Constraint::Length(15),
         Constraint::Fill(1),
@@ -269,7 +261,7 @@ fn render_temperature_scatterplot(frame: &mut Frame, area: Rect, hourly: &Vec<Op
 
 
 /// Creates the cards for the 4-cast section
-fn create_weather_card(period: &OpenMeteoPeriod) -> Table {
+fn create_weather_card(period: &OpenMeteoPeriod) -> Table<'_> {
         let widths = [
             Constraint::Length(15),
             Constraint::Fill(1)
