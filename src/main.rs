@@ -329,17 +329,23 @@ fn get_day_from_date(date: &String) -> String {
 #[serde(rename_all = "camelCase")]
 struct App {
     open_meteo_forecast: OpenMeteoForecast,
-    todays_weather_description: String,
+    todays_weather_description: Option<String>,
     moon_phase_art: String,
-    exit: bool
+    exit: bool,
+    legacy_capable: bool,
 }
 
 /// Main Ratatui app for Raijin
 impl App {
     /// Runs the application's main loop until the user quits
-    fn run(&mut self, terminal: &mut DefaultTerminal, forecast: OpenMeteoForecast, today: String, moon_phase_art: String) -> io::Result<()> {
+    fn run(&mut self, terminal: &mut DefaultTerminal, forecast: OpenMeteoForecast, today: Option<String>, moon_phase_art: String) -> io::Result<()> {
         self.open_meteo_forecast = forecast;
-        self.todays_weather_description = today;
+
+        self.legacy_capable = today.is_some();
+        if self.legacy_capable {
+            self.todays_weather_description = today;
+        }
+
         self.moon_phase_art = moon_phase_art;
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
@@ -398,15 +404,16 @@ impl App {
                 , mid_bottom);
 
         // Render the day's full description into the top-left-bottom section
-        frame.render_widget(
-            Paragraph::new(self.todays_weather_description.clone()).wrap(Wrap { trim: true }).alignment(Alignment::Center)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(Line::from(" Right Now Details ").light_green().centered().bold())
-                        .padding(Padding::uniform(1))
-                )
-                , description);
+        if self.legacy_capable {
+            frame.render_widget(
+                Paragraph::new(self.todays_weather_description.clone().unwrap()).wrap(Wrap { trim: true }).alignment(Alignment::Center) .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(Line::from(" Right Now Details ").light_green().centered().bold())
+                            .padding(Padding::uniform(1))
+                    )
+                    , description);
+        }
 
         // Render forecast summary details for right now
         frame.render_widget(create_right_now_table(&self.open_meteo_forecast), quick_stats);
@@ -602,6 +609,15 @@ fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>>
 }
 
 
+fn check_legacy_compliance() -> bool {
+    let timezone = env::var("TIMEZONE").unwrap().to_string();
+    let state = env::var("STATE").unwrap().to_string();
+    let zone = env::var("ZONE").unwrap().to_string();
+
+    return zone != "" && state != "";
+}
+
+
 
 fn main() -> io::Result<()> {
     let _ = configure();
@@ -624,7 +640,10 @@ fn main() -> io::Result<()> {
             return Ok(());
         },
         None => {}
-    } 
+    }
+
+    let is_legacy_compliant: bool = check_legacy_compliance();
+    println!("{:?}", is_legacy_compliant);
 
     let data = include_str!("./weather-codes.json");
     let weather_codes: serde_json::Value = serde_json::from_str(&data).expect("JSON was malformed");
@@ -640,9 +659,13 @@ fn main() -> io::Result<()> {
         .build();
 
     let agent = Agent::new_with_config(config);
-        
-    let nws_periods = get_nws_weather_periods(&agent).unwrap();
-    let today = nws_periods[0].detailed_forecast.clone();
+
+    let today = None;
+    if is_legacy_compliant {
+        let nws_periods = get_nws_weather_periods(&agent).unwrap();
+        let today = Some(nws_periods[0].detailed_forecast.clone());
+    }
+
     let open_meteo_forecast = get_open_meteo_weather(&agent, weather_codes).unwrap();
     let all_moon_phases = get_moon_phases(&agent, open_meteo_forecast.periods[0].date.clone()).unwrap(); 
 
