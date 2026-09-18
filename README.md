@@ -4,7 +4,7 @@
 <br />
 
   <p>
-    A free, simple weather TUI that pulls data without the need for an API key, account, or subscription. Weather data is from <a href="https://api.weather.gov/">NWS</a> and <a href="https://open-meteo.com/en/docs">OpenMeteo</a>. Moon phase data is from <a href="https://viewbits.com/docs/moon-phase-api-documentation">ViewBits</a>. <br /> Only supports Mac and Linux at the moment.
+    A free, simple weather TUI that pulls data without the need for an API key, account, or subscription. Weather data is from <a href="https://api.weather.gov/">NWS</a> and <a href="https://open-meteo.com/en/docs">OpenMeteo</a>. Moon phase data is from <a href="https://aa.usno.navy.mil/data/MoonPhases">US Navy</a> (Kinda weird, I know. But they were faster than ViewBits). <br /> Only supports Mac and Linux at the moment.
   </p>
 
 </div>

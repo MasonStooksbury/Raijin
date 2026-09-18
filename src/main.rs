@@ -155,14 +155,26 @@ struct OpenMeteoForecast {
     hourly: Vec<OpenMeteoHourly>
 }
 
-/// Moon phase data for a given date
+/// Phase data for Navy API moon phases
 #[derive(Serialize, Deserialize, Debug)]
-struct MoonPhase {
-    date: String,
+struct PhaseData {
+    day: i32,
+    month: i32,
+    year: i32,
     phase: String,
-    illumination: String
+    time: String
 }
 
+/// New Moon phase data for a given date
+#[derive(Serialize, Deserialize, Debug)]
+struct NewMoonPhase {
+    apiversion: String,
+    day: i32,
+    month: i32,
+    numphases: i32,
+    year: i32, 
+    phasedata: Vec<PhaseData>
+}
 
 
 /// Create the "Right Now" weather table
@@ -520,6 +532,7 @@ fn get_open_meteo_weather(agent: &Agent, weather_codes: serde_json::Value) -> Re
 
 /// Get the morning/night weather for the next 7 days (including today)
 /// Using this API: <https://api.weather.gov/>
+/// Used exclusively for the Right Now Details in Legacy mode
 fn get_nws_weather_periods(agent: &Agent) -> Result<Vec<NwsPeriod>, ureq::Error> {
     let state = env::var("STATE").unwrap();
     let zone = env::var("ZONE").unwrap();
@@ -535,18 +548,21 @@ fn get_nws_weather_periods(agent: &Agent) -> Result<Vec<NwsPeriod>, ureq::Error>
 
 
 
-/// Get the phases of the moon for today and the next 3 days
-/// Using this API: <https://api.viewbits.com/v1/moonphase>
-fn get_moon_phases(agent: &Agent, date: String) -> Result<Vec<MoonPhase>, ureq::Error> {
-    let url = format!("https://api.viewbits.com/v1/moonphase?startdate={}", date);
-    let moon_phases = agent.get(url)
+/// Get the phase of the moon for today
+/// Using this API: https://aa.usno.navy.mil/api/moon/phases/date?date=2026-09-18&nump=1
+fn get_moon_phase(agent: &Agent, date: String) -> Result<NewMoonPhase, ureq::Error> {
+    let url = format!("https://aa.usno.navy.mil/api/moon/phases/date?date={}&nump=1", date);
+    let moon_phase = agent.get(url)
         .call()?
         .body_mut()
-        .read_json::<Vec<MoonPhase>>()?;
+        .read_json::<NewMoonPhase>()?;
 
-    return Ok(moon_phases);
+    Ok(moon_phase)
 }
 
+
+
+/// Create a config directory if it doesn't exist and prepopulate the .env file
 fn configure() -> Result<(), Box<dyn std::error::Error>> {
     let folder: PathBuf = dirs::config_dir()
         .expect("configure - Could not find config directory")
@@ -564,6 +580,7 @@ fn configure() -> Result<(), Box<dyn std::error::Error>> {
 
     return Ok(());
 }
+
 
 
 /// Update config file with new values
@@ -677,16 +694,15 @@ fn main() -> io::Result<()> {
         today = Some(nws_periods[0].detailed_forecast.clone());
     }
 
+    // Get all the weather data
     let now = Instant::now();
-
     let open_meteo_forecast = get_open_meteo_weather(&agent, weather_codes).unwrap();
     println!("openmeteo: {:.2?}", now.elapsed());
-    let now = Instant::now();
-    let all_moon_phases = get_moon_phases(&agent, open_meteo_forecast.periods[0].date.clone()).unwrap(); 
-    println!("allmoon: {:.2?}", now.elapsed());
 
-    let thing = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", all_moon_phases[3].phase)).unwrap();
-    let moon_phase_art = thing.contents_utf8().unwrap();
+    // Get the moon phase and use that to get the right art file
+    let moon_phase = get_moon_phase(&agent, open_meteo_forecast.periods[0].date.clone()).unwrap(); 
+    let phase_file = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", moon_phase.phasedata[0].phase)).unwrap();
+    let moon_phase_art = phase_file.contents_utf8().unwrap();
     
     // Initialize the TUI
     let mut terminal = ratatui::init();
