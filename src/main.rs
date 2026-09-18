@@ -19,6 +19,7 @@ use dirs;
 use ureq::Agent;
 use include_dir::{include_dir, Dir};
 use clap::{Parser, Subcommand};
+use std::time::Instant;
 
 static MOON_PHASE_ART_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/moon-phase-art");
 
@@ -332,7 +333,7 @@ struct App {
     todays_weather_description: Option<String>,
     moon_phase_art: String,
     exit: bool,
-    legacy_capable: bool,
+    legacy_compliant: bool,
 }
 
 /// Main Ratatui app for Raijin
@@ -341,8 +342,8 @@ impl App {
     fn run(&mut self, terminal: &mut DefaultTerminal, forecast: OpenMeteoForecast, today: Option<String>, moon_phase_art: String) -> io::Result<()> {
         self.open_meteo_forecast = forecast;
 
-        self.legacy_capable = today.is_some();
-        if self.legacy_capable {
+        self.legacy_compliant = today.is_some();
+        if self.legacy_compliant {
             self.todays_weather_description = today;
         }
 
@@ -404,7 +405,7 @@ impl App {
                 , mid_bottom);
 
         // Render the day's full description into the top-left-bottom section
-        if self.legacy_capable {
+        if self.legacy_compliant {
             frame.render_widget(
                 Paragraph::new(self.todays_weather_description.clone().unwrap()).wrap(Wrap { trim: true }).alignment(Alignment::Center) .block(
                         Block::default()
@@ -451,12 +452,21 @@ impl App {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Char('q') => self.exit(),
+            KeyCode::Char('l') => self.toggle_legacy_mode(),
             _ => {}
         }
     }
 
     fn exit(&mut self) {
         self.exit = true;
+    }
+
+    fn toggle_legacy_mode(&mut self) {
+        println!("Enable legacy mode!");
+        if !self.legacy_compliant {
+            //display popup
+            todo!();
+        }
     }
 }
 
@@ -610,7 +620,6 @@ fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>>
 
 
 fn check_legacy_compliance() -> bool {
-    let timezone = env::var("TIMEZONE").unwrap().to_string();
     let state = env::var("STATE").unwrap().to_string();
     let zone = env::var("ZONE").unwrap().to_string();
 
@@ -641,10 +650,7 @@ fn main() -> io::Result<()> {
         },
         None => {}
     }
-
-    let is_legacy_compliant: bool = check_legacy_compliance();
-    println!("{:?}", is_legacy_compliant);
-
+    
     let data = include_str!("./weather-codes.json");
     let weather_codes: serde_json::Value = serde_json::from_str(&data).expect("JSON was malformed");
 
@@ -660,14 +666,24 @@ fn main() -> io::Result<()> {
 
     let agent = Agent::new_with_config(config);
 
-    let today = None;
+    let is_legacy_compliant: bool = check_legacy_compliance();
+
+    // If the legacy variables aren't set, don't setup the "Right Now Details"
+    let mut today = None;
     if is_legacy_compliant {
+        let now = Instant::now();
         let nws_periods = get_nws_weather_periods(&agent).unwrap();
-        let today = Some(nws_periods[0].detailed_forecast.clone());
+        println!("nws_periods: {:.2?}", now.elapsed());
+        today = Some(nws_periods[0].detailed_forecast.clone());
     }
 
+    let now = Instant::now();
+
     let open_meteo_forecast = get_open_meteo_weather(&agent, weather_codes).unwrap();
+    println!("openmeteo: {:.2?}", now.elapsed());
+    let now = Instant::now();
     let all_moon_phases = get_moon_phases(&agent, open_meteo_forecast.periods[0].date.clone()).unwrap(); 
+    println!("allmoon: {:.2?}", now.elapsed());
 
     let thing = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", all_moon_phases[3].phase)).unwrap();
     let moon_phase_art = thing.contents_utf8().unwrap();
