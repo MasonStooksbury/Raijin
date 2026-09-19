@@ -395,8 +395,7 @@ impl App {
         frame.render_widget(Block::bordered(), mid_top);
         frame.render_widget(Block::new(), mid_bottom);
 
-        // Render the current moon phase for tonight (they store the current moon phase in the
-        // third position):
+        // Render the current moon phase for tonight
         frame.render_widget(
             Paragraph::new(self.moon_phase_art.clone()).alignment(Alignment::Center)
                 .block(
