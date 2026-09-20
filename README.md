@@ -63,7 +63,6 @@ When editing the logo.txt or any of the moon phases, make sure every line has th
 ## TODO
 I did this project over the course of a week to continue sharpening my Rust skills as well as work with the Ratatui library. While I'm proud of what I made, I am a little burned out due to working on it a lot in such a short time. That being said, if/when I come back to it here's what I'd like to add (or you can contribute!):
 
-- Use [clap](https://crates.io/crates/clap) to add command-line parsing. (This would make it easier to view `help` documentation. As well as provide a way to change the config file arguments without having to edit a file directly. Not a huge deal, but would be nice to have)
 - Tidy up the code. (I am by no means a great Rust programmer and I'm sure I've done a lot that isn't very idiomatic. <sub>You know, like naming my crate with a capital letter? lol</sub>)
 - Rework config file setup. (Right now the way I create a config file for this is pretty lazy by just looking under `~/.config` and creating a file. But this can break if people have this symlinked for dotfile stuff. I'm sure there's a more robust way to do this)
 - Test on Windows/add Windows support if it doesn't work (it should, I just haven't tested it yet)

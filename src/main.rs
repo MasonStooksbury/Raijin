@@ -53,7 +53,15 @@ enum Commands {
 
         /// Your County/Zone code as specified by NOAA (e.g. TNZ069 - More info here: https://wiki.weather-watch.com/index.php/NOAA_US_County_and_Zone_Codes )
         #[clap(short, long)]
-        zone: Option<String>
+        zone: Option<String>,
+
+        /// Temperature Units (e.g. F, C - Defaults to F. OpenMeteo doesn't have Kelvin :/ )
+        #[clap(short='u', long)]
+        temp_unit: Option<String>,
+
+        /// Whether or not you want the default screen when Raijin opens to be the "legacy" screen (e.g. true or false - Defaults to false)
+        #[clap(short, long)]
+        default_legacy: Option<String>,
     }
 }
 
@@ -65,7 +73,9 @@ struct ConfigParams {
     lat: Option<String>,
     long: Option<String>,
     state: Option<String>,
-    zone: Option<String>
+    zone: Option<String>,
+    temp_unit: Option<String>,
+    default_legacy: Option<String>,
 }
 
 
@@ -216,15 +226,95 @@ fn create_right_now_table(forecast: &OpenMeteoForecast) -> Table<'_> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .padding(Padding::uniform(1))
+                    .padding(Padding::new(1,1,2,1))
+                    // .padding(Padding::uniform(1))
                     .title(Line::from(" Right Now ").light_blue().centered().bold())
             );
 }
 
 
+/// Renders the scatterplot to show the temperature over the next two weeks
+fn render_fortnight_scatterplot(
+    frame: &mut Frame,
+    area: Rect,
+    hourly: &Vec<OpenMeteoHourly>,
+    daily: &Vec<OpenMeteoPeriod>,
+    temp_unit: String,
+) {
+    const DATA_LENGTH: usize = 336;
+
+    let mut fortnight_hourly: [(f64, f64); DATA_LENGTH] = [(0., 0.); DATA_LENGTH];
+    let mut count: usize = 0;
+    for i in hourly {
+        let mut temp_clone = i.temperature.clone();
+        temp_clone.pop();
+        let temp_as_float = temp_clone.parse::<f64>().unwrap();
+        // Scale the x-coordinate to fit within 0..336 for 14 days of hourly data
+        let x_position = count as f64;
+        fortnight_hourly[count] = (x_position, temp_as_float);
+        count += 1;
+    }
+
+    let days: Vec<String> = daily
+        .iter()
+        .map(|l| {
+            let parts: Vec<&str> = l.date.split('-').collect();
+            if parts.len() == 3 {
+                format!("{}-{}", parts[1], parts[2]) // MM-DD
+            } else {
+                l.date.clone() // fallback in case the format is unexpected
+            }
+        })
+        .collect();
+
+    let x_labels: Vec<Line> = (0..14) // 14 days in total
+        .map(|i| {
+            let day = &days[i];
+            Line::from(day.as_str())
+        })
+        .collect();
+
+    let temps: Vec<f64> = fortnight_hourly.iter().map(|(_, temp)| *temp).collect();
+    let min_temp = temps.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_temp = temps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    let y_min = (min_temp - 5.0).floor();
+    let y_max = (max_temp + 5.0).ceil();
+
+    let step = (y_max - y_min) / 4.0;
+    let y_labels = (0..5)
+        .map(|i| format!("{:.0}", y_min + i as f64 * step))
+        .collect::<Vec<_>>();
+
+    let dataset = Dataset::default()
+        .marker(Marker::Dot)
+        .graph_type(GraphType::Scatter)
+        .style(Style::new().yellow())
+        .data(&fortnight_hourly);
+
+    let chart = Chart::new(vec![dataset])
+        .block(Block::bordered().title(Line::from(" Fortnight Temps ").cyan().centered().bold()))
+        .y_axis(
+            Axis::default()
+                .title(format!("Temp (\u{00B0}{})", temp_unit))
+                .bounds([y_min, y_max])
+                .style(Style::default().fg(Color::Gray))
+                .labels(y_labels),
+        )
+        .x_axis(
+            Axis::default()
+                .title("Days")
+                .bounds([0., DATA_LENGTH as f64])
+                .style(Style::default().fg(Color::Gray))
+                .labels(x_labels),
+        )
+        .hidden_legend_constraints((Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)));
+
+    frame.render_widget(chart, area);
+}
 
 /// Renders the scatterplot to show the temperature for the rest of the current day
-fn render_temperature_scatterplot(frame: &mut Frame, area: Rect, hourly: &Vec<OpenMeteoHourly>) {
+fn render_temperature_scatterplot(frame: &mut Frame, area: Rect, hourly: &Vec<OpenMeteoHourly>, temp_unit: String) {
     let mut today_hourly: [(f64, f64); 24] = [(0., 0.); 24];
     let mut count: usize = 0;
     for i in hourly {
@@ -243,21 +333,33 @@ fn render_temperature_scatterplot(frame: &mut Frame, area: Rect, hourly: &Vec<Op
         }
     }
 
+    
+    let temps: Vec<f64> = today_hourly.iter().map(|(_, temp)| *temp).collect();
+    let min_temp = temps.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_temp = temps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    let y_min = (min_temp - 5.0).floor();
+    let y_max = (max_temp + 5.0).ceil();
+
+    let step = (y_max - y_min) / 4.0;
+    let y_labels = (0..5)
+        .map(|i| format!("{:.0}", y_min + i as f64 * step))
+        .collect::<Vec<_>>();
 
     let dataset = Dataset::default()
             .marker(Marker::Dot)
             .graph_type(GraphType::Scatter)
             .style(Style::new().yellow())
             .data(&today_hourly);
-
-    let chart = Chart::new(vec!(dataset))
+    
+    let chart = Chart::new(vec![dataset])
         .block(Block::bordered().title(Line::from(" Today's Temps ").cyan().centered().bold()))
         .y_axis(
             Axis::default()
-                .title("Temp (\u{00B0}F)")
-                .bounds([0., 120.])
+                .title(format!("Temp (\u{00B0}{})", temp_unit))
+                .bounds([y_min, y_max])
                 .style(Style::default().fg(Color::Gray))
-                .labels(["0", "30", "60", "90", "120"]),
+                .labels(y_labels),
         )
         .x_axis(
             Axis::default()
@@ -346,18 +448,25 @@ struct App {
     moon_phase_art: String,
     exit: bool,
     legacy_compliant: bool,
+    legacy_mode_active: bool,
+    temp_unit: String,
+    is_legacy_default: bool,
 }
 
 /// Main Ratatui app for Raijin
 impl App {
     /// Runs the application's main loop until the user quits
     fn run(&mut self, terminal: &mut DefaultTerminal, forecast: OpenMeteoForecast, today: Option<String>, moon_phase_art: String) -> io::Result<()> {
+        self.temp_unit = env::var("TEMPERATURE_UNIT").unwrap();
+        self.is_legacy_default = env::var("DEFAULT_LEGACY").unwrap() == "true";
         self.open_meteo_forecast = forecast;
 
+        self.legacy_mode_active = self.is_legacy_default;
         self.legacy_compliant = today.is_some();
         if self.legacy_compliant {
             self.todays_weather_description = today;
         }
+
 
         self.moon_phase_art = moon_phase_art;
         while !self.exit {
@@ -367,7 +476,7 @@ impl App {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    fn render_legacy_screen(&self, frame: &mut Frame) {
         use Constraint::{Percentage, Ratio};
 
         let vertical = Layout::vertical([Percentage(50), Percentage(50)]);
@@ -416,20 +525,18 @@ impl App {
                 , mid_bottom);
 
         // Render the day's full description into the top-left-bottom section
-        if self.legacy_compliant {
-            frame.render_widget(
-                Paragraph::new(self.todays_weather_description.clone().unwrap()).wrap(Wrap { trim: true }).alignment(Alignment::Center) .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(Line::from(" Right Now Details ").light_green().centered().bold())
-                            .padding(Padding::uniform(1))
-                    )
-                    , description);
-        }
+        frame.render_widget(
+            Paragraph::new(self.todays_weather_description.clone().unwrap()).wrap(Wrap { trim: true }).alignment(Alignment::Center) .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(Line::from(" Right Now Details ").light_green().centered().bold())
+                        .padding(Padding::uniform(1))
+                )
+                , description);
 
         // Render forecast summary details for right now
         frame.render_widget(create_right_now_table(&self.open_meteo_forecast), quick_stats);
-        render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly);
+        render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly, self.temp_unit.clone());
         
         // Populate the 4-cast
         for i in 1..5 {
@@ -445,6 +552,93 @@ impl App {
             }
             frame.render_widget(create_weather_card(&self.open_meteo_forecast.periods[i]), render_area);
         }
+    }
+
+    fn render_modern_screen(&self, frame: &mut Frame) {
+        use Constraint::{Percentage, Ratio};
+
+        let vertical = Layout::vertical([Percentage(70), Percentage(30)]);
+        let [today_area, forecast_area] = vertical.areas(frame.area());
+        
+        let horizontal = Layout::horizontal([Ratio(2,3), Ratio(1,3)]);
+        let [top_left, top_right] = horizontal.areas(today_area);
+
+        let top = Layout::vertical([Percentage(40), Percentage(60)]);
+        let [today_info, fortnight_graph] = top.areas(top_left);
+
+        let top2 = Layout::vertical([Ratio(3,4), Ratio(1,4)]);
+        let [today, logo_area] = top2.areas(top_right);
+
+        let topest = Layout::horizontal([Ratio(1,2), Ratio(1,2)]);
+        let [quick_stats, mid_top] = topest.areas(today_info);
+ 
+        let outer_block = Block::bordered().title(Line::from(" 4-cast ").light_magenta().centered().bold()).padding(Padding::new(0,0,1,0));
+        let inner_block = Block::bordered();
+        let inner_area = outer_block.inner(forecast_area);
+
+        let upcoming_weather = Layout::horizontal([Ratio(1,4), Ratio(1,4), Ratio(1,4), Ratio(1,4)]);
+        let [slot1, slot2, slot3, slot4] = upcoming_weather.areas(inner_area);
+        
+        frame.render_widget(outer_block, forecast_area);
+        frame.render_widget(inner_block, inner_area);
+
+        frame.render_widget(Block::bordered(), mid_top);
+        frame.render_widget(Block::new(), fortnight_graph);
+
+        // Render the current moon phase for tonight
+        frame.render_widget(
+            Paragraph::new(self.moon_phase_art.clone()).alignment(Alignment::Center)
+                .block(
+                    Block::new()
+                        .title(Line::from(" Tonight's Moon Phase ").light_yellow().centered().bold())
+                )
+                , mid_top);
+
+        // Render the logo on the right-hand side
+        let logo = include_str!("./logo.txt");
+        frame.render_widget(
+            Paragraph::new(logo)
+                .alignment(Alignment::Center)
+                .style(Style::new().red()),
+            logo_area);
+
+        // Render the fortnight weather scatterplot
+        render_fortnight_scatterplot(
+            frame,
+            fortnight_graph,
+            &self.open_meteo_forecast.hourly,
+            &self.open_meteo_forecast.periods,
+            self.temp_unit.clone(),
+        );
+
+        // Render forecast summary details for right now
+        frame.render_widget(create_right_now_table(&self.open_meteo_forecast), quick_stats);
+        render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly, self.temp_unit.clone());
+        
+        // Populate the 4-cast
+        for i in 1..5 {
+            let mut render_area: Rect = slot1;
+            if i == 2 {
+                render_area = slot2;
+            } else if i == 3 {
+                render_area = slot3;
+            } else if i == 4 {
+                render_area = slot4;
+            }
+
+            frame.render_widget(
+                create_weather_card(&self.open_meteo_forecast.periods[i]),
+                render_area,
+            );
+        }
+    }
+
+    fn draw(&self, frame: &mut Frame) {
+        if self.legacy_mode_active && self.legacy_compliant {
+            self.render_legacy_screen(frame);
+            return;
+        }
+        self.render_modern_screen(frame);
     }
 
     /// Updates the application's state based on user input
@@ -473,11 +667,11 @@ impl App {
     }
 
     fn toggle_legacy_mode(&mut self) {
-        println!("Enable legacy mode!");
         if !self.legacy_compliant {
             //display popup
-            todo!();
+            return;
         }
+        self.legacy_mode_active = !self.legacy_mode_active;
     }
 }
 
@@ -488,10 +682,16 @@ impl App {
 fn get_open_meteo_weather(agent: &Agent, weather_codes: serde_json::Value) -> Result<OpenMeteoForecast, ureq::Error> {
     let latitude = env::var("LATITUDE").unwrap();
     let longitude = env::var("LONGITUDE").unwrap();
+    let mut temp_unit = env::var("TEMPERATURE_UNIT").unwrap();
+    if temp_unit == "F" {
+        temp_unit = "fahrenheit".to_string();
+    } else {
+        temp_unit = "celsius".to_string();
+    }
     let mut timezone = env::var("TIMEZONE").unwrap().to_string();
     timezone = encode(&timezone).to_string();
-    
-    let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,weather_code,precipitation_probability_mean&hourly=temperature_2m,weather_code&current=temperature_2m,apparent_temperature,weather_code&timezone={}&forecast_days=14&wind_speed_unit=mph&temperature_unit=fahrenheit&precipitation_unit=inch", latitude.to_string(), longitude.to_string(), timezone);
+
+    let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,weather_code,precipitation_probability_mean&hourly=temperature_2m,weather_code&current=temperature_2m,apparent_temperature,weather_code&timezone={}&forecast_days=14&temperature_unit={}", latitude.to_string(), longitude.to_string(), timezone, temp_unit);
 
     let json = agent.get(url)
         .call()?
@@ -574,7 +774,7 @@ fn configure() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if !file.exists() {
-        fs::write(&file, "ZONE=\"TNZ069\"\nSTATE=\"TN\"\nLATITUDE=\"35.9626444\"\nLONGITUDE=\"-83.9167239\"\nTIMEZONE=\"America/New_York\"\n")?;
+        fs::write(&file, "ZONE=\"TNZ069\"\nSTATE=\"TN\"\nLATITUDE=\"35.9626444\"\nLONGITUDE=\"-83.9167239\"\nTIMEZONE=\"America/New_York\"\nTEMPERATURE_UNIT=\"F\"\nDEFAULT_LEGACY=\"false\"\n")?;
     }
 
     return Ok(());
@@ -590,6 +790,8 @@ fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>>
     let original_long = env::var("LONGITUDE").unwrap().to_string();
     let original_state = env::var("STATE").unwrap().to_string();
     let original_zone = env::var("ZONE").unwrap().to_string();
+    let original_temp_unit = env::var("TEMPERATURE_UNIT").unwrap().to_string();
+    let original_default_legacy = env::var("DEFAULT_LEGACY").unwrap().to_string();
 
     let mut new_params = HashMap::new();
 
@@ -623,12 +825,33 @@ fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>>
         new_params.insert("ZONE", params.zone.clone().unwrap().to_string());
     }
 
+    if !&params.temp_unit.is_some() {
+        new_params.insert("TEMPERATURE_UNIT", original_temp_unit);
+    } else {
+        new_params.insert("TEMPERATURE_UNIT", params.temp_unit.clone().unwrap().to_string());
+    }
+
+    if !&params.default_legacy.is_some() {
+        new_params.insert("DEFAULT_LEGACY", original_default_legacy);
+    } else {
+        new_params.insert("DEFAULT_LEGACY", params.default_legacy.clone().unwrap().to_string());
+    }
+
     let file: PathBuf = dirs::config_dir()
         .expect("update_config - Could not find config directory")
         .join("Raijin")
         .join(".env");
 
-    let file_data = format!("ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\n", new_params["ZONE"], new_params["STATE"], new_params["LAT"], new_params["LONG"], new_params["TIMEZONE"]);
+    let file_data = format!(
+        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"",
+        new_params["ZONE"],
+        new_params["STATE"],
+        new_params["LAT"],
+        new_params["LONG"],
+        new_params["TIMEZONE"],
+        new_params["TEMPERATURE_UNIT"],
+        new_params["DEFAULT_LEGACY"],
+    );
     fs::write(&file, file_data)?;
 
     Ok(())
@@ -652,13 +875,15 @@ fn main() -> io::Result<()> {
     let args = Args::parse();
 
     match &args.command {
-        Some(Commands::Edit { timezone, lat, long, state, zone }) => {
+        Some(Commands::Edit { timezone, lat, long, state, zone, temp_unit, default_legacy }) => {
             let config_params = ConfigParams {
                 timezone: timezone.clone(),
                 lat: lat.clone(),
                 long: long.clone(),
                 state: state.clone(),
-                zone: zone.clone()
+                zone: zone.clone(),
+                temp_unit: temp_unit.clone(),
+                default_legacy: default_legacy.clone(),
             };
 
             let _ = update_config(config_params);
