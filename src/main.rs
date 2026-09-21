@@ -13,7 +13,7 @@ use ratatui::{
     prelude::{Alignment},
     DefaultTerminal, Frame,
 };
-use chrono::{NaiveDate, Datelike};
+use chrono::{NaiveDate, Datelike, DateTime, TimeZone, Timelike, Local};
 use std::path::{PathBuf};
 use dirs;
 use ureq::Agent;
@@ -77,6 +77,78 @@ struct ConfigParams {
     temp_unit: Option<String>,
     default_legacy: Option<String>,
 }
+
+
+
+use std::f64::consts::PI;
+use std::fmt;
+
+/// Conversion factor from degrees to radians.
+pub const DEG_TO_RAD: f64 = PI / 180.0;
+
+/// Conversion factor from radians to degrees.
+pub const RAD_TO_DEG: f64 = 180.0 / PI;
+
+/// An angle measured in degrees.
+///
+/// Provides type safety to prevent mixing degrees with radians in calculations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Degrees(f64);
+
+impl Degrees {
+    /// Create an angle from a value in degrees.
+    pub fn new(value: f64) -> Self {
+        Self(value)
+    }
+
+    /// Return the underlying numeric value as a bare `f64`.
+    pub fn value(&self) -> f64 {
+        self.0
+    }
+
+    /// Normalize to 0-360 range
+    pub fn normalized(self) -> Self {
+        let mut result = self.0 % 360.0;
+        if result < 0.0 {
+            result += 360.0;
+        }
+        Self(result)
+    }
+
+    /// Sine of the angle.
+    pub fn sin(self) -> f64 {
+        self.0.to_radians().sin()
+    }
+
+    /// Cosine of the angle.
+    pub fn cos(self) -> f64 {
+        self.0.to_radians().cos()
+    }
+
+    /// Tangent of the angle.
+    pub fn tan(self) -> f64 {
+        self.0.to_radians().tan()
+    }
+}
+
+impl fmt::Display for Degrees {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}°", self.0)
+    }
+}
+
+impl From<f64> for Degrees {
+    fn from(value: f64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Degrees> for f64 {
+    fn from(deg: Degrees) -> f64 {
+        deg.0
+    }
+}
+
 
 
 /// Single day of weather forecast from NWS
@@ -165,25 +237,96 @@ struct OpenMeteoForecast {
     hourly: Vec<OpenMeteoHourly>
 }
 
-/// Phase data for Navy API moon phases
-#[derive(Serialize, Deserialize, Debug)]
-struct PhaseData {
-    day: i32,
-    month: i32,
-    year: i32,
-    phase: String,
-    time: String
+
+fn normalize_degrees(angle: f64) -> f64 {
+    Degrees::new(angle).normalized().value()
 }
 
-/// New Moon phase data for a given date
-#[derive(Serialize, Deserialize, Debug)]
-struct NewMoonPhase {
-    apiversion: String,
-    day: i32,
-    month: i32,
-    numphases: i32,
-    year: i32, 
-    phasedata: Vec<PhaseData>
+fn julian_day<T: TimeZone>(dt: DateTime<T>) -> f64 {
+    // Convert to UTC for Julian Day calculation
+    let utc_dt = dt.with_timezone(&chrono::Utc);
+
+    let year = utc_dt.year() as f64;
+    let month = utc_dt.month() as f64;
+    let day = utc_dt.day() as f64
+        + utc_dt.hour() as f64 / 24.0
+        + utc_dt.minute() as f64 / 1440.0
+        + utc_dt.second() as f64 / 86400.0;
+
+    let mut y = year;
+    let mut m = month;
+
+    if month <= 2.0 {
+        y -= 1.0;
+        m += 12.0;
+    }
+
+    let a = (y / 100.0).floor();
+    let b = 2.0 - a + (a / 4.0).floor();
+
+    (365.25 * (y + 4716.0)).floor() + (30.6001 * (m + 1.0)).floor() + day + b - 1524.5
+}
+
+/// Calculate Julian Century from a Julian Day number.
+/// Julian Century is the number of centuries since the J2000.0 epoch (JD 2451545.0),
+/// which corresponds to January 1, 2000, 12:00 TT.
+fn julian_century(jd: f64) -> f64 {
+    (jd - 2451545.0) / 36525.0
+}
+
+
+fn get_sun_and_moon_stuff(t: f64) -> (f64, f64, f64) {
+    // Calculate mean elongation of the Moon
+    let d = 297.8501921 + t * (445267.1114034 + t * (-0.0018819 + t * (1.0 / 545868.0 + t * (-1.0 / 113065000.0))));
+    normalize_degrees(d);
+
+    // Calculate Sun's mean anomaly
+    let m = 357.5291092 + t * (35999.0502909 + t * (-0.0001536 + t * (1.0 / 24490000.0)));
+    normalize_degrees(m);
+
+    // Calculate Moon's mean anomaly
+    let m_prime = 134.9633964 + t * (477198.8675055 + t * (0.0087414 + t * (1.0 / 69699.0 + t * (-1.0 / 14712000.0))));
+    normalize_degrees(m_prime);
+
+    return (d * DEG_TO_RAD, m * DEG_TO_RAD, m_prime * DEG_TO_RAD);
+}
+
+/// Calculate phase angle
+fn get_phase_angle() -> f64 {
+    let jd = julian_day(Local::now());
+    let t = julian_century(jd);
+
+    let (d, m, m_prime) = get_sun_and_moon_stuff(t);
+
+    // Illumination angle (0° = full moon, 180° = new moon)
+    let illum_angle = 180.0 - d * RAD_TO_DEG - 6.289 * m_prime.sin() + 2.100 * m.sin()
+        - 1.274 * (2.0 * d - m_prime).sin()
+        - 0.658 * (2.0 * d).sin()
+        - 0.214 * (2.0 * m_prime).sin()
+        - 0.110 * d.sin();
+
+
+    // Convert to orbital phase angle (0° = new moon, 180° = full moon)
+    return normalize_degrees(180.0 - illum_angle);
+}
+
+/// Return the moon phase name given the phase angle
+fn phase_name(phase_angle: f64) -> &'static str {
+    match phase_angle {
+        a if a < 11.25 => "New Moon",
+        a if a < 78.75 => "Waxing Crescent",
+        a if a < 101.25 => "First Quarter",
+        a if a < 168.75 => "Waxing Gibbous",
+        a if a < 191.25 => "Full Moon",
+        a if a < 258.75 => "Waning Gibbous",
+        a if a < 281.25 => "Last Quarter",
+        a if a < 348.75 => "Waning Crescent",
+        _ => "New Moon",
+    }
+}
+
+fn get_moon_phase() -> &'static str {
+    return phase_name(get_phase_angle());
 }
 
 
@@ -746,21 +889,6 @@ fn get_nws_weather_periods(agent: &Agent) -> Result<Vec<NwsPeriod>, ureq::Error>
 }
 
 
-
-/// Get the phase of the moon for today
-/// Using this API: https://aa.usno.navy.mil/api/moon/phases/date?date=2026-09-18&nump=1
-fn get_moon_phase(agent: &Agent, date: String) -> Result<NewMoonPhase, ureq::Error> {
-    let url = format!("https://aa.usno.navy.mil/api/moon/phases/date?date={}&nump=1", date);
-    let moon_phase = agent.get(url)
-        .call()?
-        .body_mut()
-        .read_json::<NewMoonPhase>()?;
-
-    Ok(moon_phase)
-}
-
-
-
 /// Create a config directory if it doesn't exist and prepopulate the .env file
 fn configure() -> Result<(), Box<dyn std::error::Error>> {
     let folder: PathBuf = dirs::config_dir()
@@ -924,8 +1052,7 @@ fn main() -> io::Result<()> {
     println!("openmeteo: {:.2?}", now.elapsed());
 
     // Get the moon phase and use that to get the right art file
-    let moon_phase = get_moon_phase(&agent, open_meteo_forecast.periods[0].date.clone()).unwrap(); 
-    let phase_file = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", moon_phase.phasedata[0].phase)).unwrap();
+    let phase_file = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", get_moon_phase())).unwrap();
     let moon_phase_art = phase_file.contents_utf8().unwrap();
     
     // Initialize the TUI
