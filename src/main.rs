@@ -595,6 +595,7 @@ struct App {
     temp_unit: String,
     is_legacy_default: bool,
     show_legacy_popup: bool,
+    show_configuration: bool,
 }
 
 /// Main Ratatui app for Raijin
@@ -604,6 +605,7 @@ impl App {
         self.temp_unit = env::var("TEMPERATURE_UNIT").unwrap();
         self.is_legacy_default = env::var("DEFAULT_LEGACY").unwrap() == "true";
         self.open_meteo_forecast = forecast;
+        self.show_configuration = false;
 
         self.legacy_mode_active = self.is_legacy_default;
         self.legacy_compliant = today.is_some();
@@ -757,16 +759,19 @@ impl App {
 
         if self.show_legacy_popup {
             let area = frame.area().centered(
-                Constraint::Percentage(20),
-                Constraint::Length(3), // top and bottom border + content
+                Constraint::Percentage(25),
+                Constraint::Length(9), // top and bottom border + content
             );
-            let popup = Paragraph::new("Popup content").block(Block::bordered().title("Popup"));
+            let title = Line::from("SETUP REQUIRED").light_yellow().centered().bold();
+            let content = "\nTo use Legacy Mode, please configure your\nweather ZONE and STATE code.\n\n\nPress Esc to close\nPress C to configure";
+            let popup = Paragraph::new(content).block(Block::bordered().title(title));
             frame.render_widget(Clear, area);
             frame.render_widget(popup, area);
         }
 
         // Render forecast summary details for right now
         frame.render_widget(create_right_now_table(&self.open_meteo_forecast), quick_stats);
+
         render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly, self.temp_unit.clone());
         
         // Populate the 4-cast
@@ -812,6 +817,7 @@ impl App {
         match key_event.code {
             KeyCode::Char('q') => self.exit(),
             KeyCode::Char('l') => self.toggle_legacy_mode(),
+            KeyCode::Char('c') => self.configure_app(),
             KeyCode::Esc => {self.show_legacy_popup = false},
             _ => {}
         }
@@ -827,6 +833,11 @@ impl App {
             return;
         }
         self.legacy_mode_active = !self.legacy_mode_active;
+    }
+
+    fn configure_app(&mut self) {
+        self.show_configuration = true;
+        return;
     }
 }
 
@@ -914,7 +925,7 @@ fn configure() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if !file.exists() {
-        fs::write(&file, "ZONE=\"TNZ069\"\nSTATE=\"TN\"\nLATITUDE=\"35.9626444\"\nLONGITUDE=\"-83.9167239\"\nTIMEZONE=\"America/New_York\"\nTEMPERATURE_UNIT=\"F\"\nDEFAULT_LEGACY=\"false\"\n")?;
+        fs::write(&file, "ZONE=\"\"\nSTATE=\"\"\nLATITUDE=\"35.9626444\"\nLONGITUDE=\"-83.9167239\"\nTIMEZONE=\"America/New_York\"\nTEMPERATURE_UNIT=\"F\"\nDEFAULT_LEGACY=\"false\"\n")?;
     }
 
     return Ok(());
