@@ -9,7 +9,7 @@ use ratatui::{
     style::{Stylize, Color, Style},
     symbols::{Marker},
     text::{Line, Text},
-    widgets::{Block, Paragraph, Borders, Wrap, Cell, Row, Table, Padding, Axis, Chart, GraphType, Dataset},
+    widgets::{Block, Clear, Paragraph, Borders, Wrap, Cell, Row, Table, Padding, Axis, Chart, GraphType, Dataset},
     prelude::{Alignment},
     DefaultTerminal, Frame,
 };
@@ -594,6 +594,7 @@ struct App {
     legacy_mode_active: bool,
     temp_unit: String,
     is_legacy_default: bool,
+    show_legacy_popup: bool,
 }
 
 /// Main Ratatui app for Raijin
@@ -754,6 +755,16 @@ impl App {
             self.temp_unit.clone(),
         );
 
+        if self.show_legacy_popup {
+            let area = frame.area().centered(
+                Constraint::Percentage(20),
+                Constraint::Length(3), // top and bottom border + content
+            );
+            let popup = Paragraph::new("Popup content").block(Block::bordered().title("Popup"));
+            frame.render_widget(Clear, area);
+            frame.render_widget(popup, area);
+        }
+
         // Render forecast summary details for right now
         frame.render_widget(create_right_now_table(&self.open_meteo_forecast), quick_stats);
         render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly, self.temp_unit.clone());
@@ -801,6 +812,7 @@ impl App {
         match key_event.code {
             KeyCode::Char('q') => self.exit(),
             KeyCode::Char('l') => self.toggle_legacy_mode(),
+            KeyCode::Esc => {self.show_legacy_popup = false},
             _ => {}
         }
     }
@@ -811,7 +823,7 @@ impl App {
 
     fn toggle_legacy_mode(&mut self) {
         if !self.legacy_compliant {
-            //display popup
+            self.show_legacy_popup = true;
             return;
         }
         self.legacy_mode_active = !self.legacy_mode_active;
