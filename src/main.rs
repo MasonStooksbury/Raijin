@@ -579,9 +579,6 @@ fn get_day_from_date(date: &String) -> String {
     }
 }
 
-
-
-
 /// Application state data
 #[derive(Serialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -757,21 +754,11 @@ impl App {
             self.temp_unit.clone(),
         );
 
-        if self.show_legacy_popup {
-            let area = frame.area().centered(
-                Constraint::Percentage(25),
-                Constraint::Length(9), // top and bottom border + content
-            );
-            let title = Line::from("SETUP REQUIRED").light_yellow().centered().bold();
-            let content = "\nTo use Legacy Mode, please configure your\nweather ZONE and STATE code.\n\n\nPress Esc to close\nPress C to configure";
-            let popup = Paragraph::new(content).block(Block::bordered().title(title));
-            frame.render_widget(Clear, area);
-            frame.render_widget(popup, area);
-        }
 
         // Render forecast summary details for right now
         frame.render_widget(create_right_now_table(&self.open_meteo_forecast), quick_stats);
 
+        // Render the scatterplot for today's temperature
         render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly, self.temp_unit.clone());
         
         // Populate the 4-cast
@@ -790,6 +777,34 @@ impl App {
                 render_area,
             );
         }
+
+        // Show the legacy popup informing the user that they need to configure ZONE and STATE in order to use legacy mode
+        if self.show_legacy_popup {
+            let area = frame.area().centered(
+                Constraint::Percentage(25),
+                Constraint::Length(9), // top and bottom border + content
+            );
+            let title = Line::from("SETUP REQUIRED").light_yellow().centered().bold();
+            let content = "\nTo use Legacy Mode, please configure your\nweather ZONE and STATE code.\n\n\nPress Esc to close\nPress C to configure";
+            let popup = Paragraph::new(content).block(Block::bordered().title(title));
+            frame.render_widget(Clear, area);
+            frame.render_widget(popup, area);
+        }
+    }
+
+    fn render_configuration_screen(&self, frame: &mut Frame) {
+        // Show the configuration page
+        if self.show_configuration {
+            let area = frame.area().centered(
+                Constraint::Percentage(50),
+                Constraint::Percentage(50), // top and bottom border + content
+            );
+            let title = Line::from("SETUP REQUIRED").light_yellow().centered().bold();
+            let content = "\nTo use Legacy Mode, please configure your\nweather ZONE and STATE code.\n\n\nPress Esc to close\nPress C to configure";
+            let popup = Paragraph::new(content).block(Block::bordered().title(title));
+            frame.render_widget(Clear, frame.area());
+            frame.render_widget(popup, area);
+        }
     }
 
     fn draw(&self, frame: &mut Frame) {
@@ -798,6 +813,7 @@ impl App {
             return;
         }
         self.render_modern_screen(frame);
+        self.render_configuration_screen(frame);
     }
 
     /// Updates the application's state based on user input
@@ -806,7 +822,9 @@ impl App {
             // it's important to check that the event is a key press event as
             // crossterm also emits key release and repeat events on Windows.
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_event(key_event)
+                if !self.show_configuration {
+                    self.handle_key_event(key_event)
+                }
             }
             _ => {}
         };
