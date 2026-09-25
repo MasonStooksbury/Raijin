@@ -1,7 +1,7 @@
-use dotenv;
+use dotenvy::{EnvLoader, EnvSequence, EnvMap};
 use serde::{Serialize, Deserialize};
 use urlencoding::encode;
-use std::{fs, io, env};
+use std::{fs, io};
 use std::collections::HashMap;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
@@ -599,8 +599,9 @@ struct App {
 impl App {
     /// Runs the application's main loop until the user quits
     fn run(&mut self, terminal: &mut DefaultTerminal, forecast: OpenMeteoForecast, today: Option<String>, moon_phase_art: String) -> io::Result<()> {
-        self.temp_unit = env::var("TEMPERATURE_UNIT").unwrap();
-        self.is_legacy_default = env::var("DEFAULT_LEGACY").unwrap() == "true";
+        let env = get_env();
+        self.temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
+        self.is_legacy_default = env.get("DEFAULT_LEGACY").unwrap() == "true";
         self.open_meteo_forecast = forecast;
         self.show_configuration = false;
 
@@ -836,6 +837,7 @@ impl App {
             KeyCode::Char('q') => self.exit(),
             KeyCode::Char('l') => self.toggle_legacy_mode(),
             KeyCode::Char('c') => self.configure_app(),
+            KeyCode::Char('r') => self.refresh_app(),
             KeyCode::Esc => {self.show_legacy_popup = false},
             _ => {}
         }
@@ -855,7 +857,19 @@ impl App {
 
     fn configure_app(&mut self) {
         self.show_configuration = true;
-        return;
+    }
+
+    fn refresh_app(&mut self) {
+        let (today, open_meteo_forecast, moon_phase_art) = get_data();
+
+        self.legacy_mode_active = self.is_legacy_default;
+        self.legacy_compliant = today.is_some();
+        if self.legacy_compliant {
+            self.todays_weather_description = today;
+        }
+
+        self.open_meteo_forecast = open_meteo_forecast;
+        self.moon_phase_art = moon_phase_art;
     }
 }
 
@@ -864,15 +878,16 @@ impl App {
 /// Get the forecast for the next 7 days as well as today's weather conditions
 /// Using this API: <https://api.open-meteo.com/v1/forecast>
 fn get_open_meteo_weather(agent: &Agent, weather_codes: serde_json::Value) -> Result<OpenMeteoForecast, ureq::Error> {
-    let latitude = env::var("LATITUDE").unwrap();
-    let longitude = env::var("LONGITUDE").unwrap();
-    let mut temp_unit = env::var("TEMPERATURE_UNIT").unwrap();
+    let env = get_env();
+    let latitude = env.get("LATITUDE").unwrap();
+    let longitude = env.get("LONGITUDE").unwrap();
+    let mut temp_unit = env.get("TEMPERATURE_UNIT").unwrap();
     if temp_unit == "F" {
         temp_unit = "fahrenheit".to_string();
     } else {
         temp_unit = "celsius".to_string();
     }
-    let mut timezone = env::var("TIMEZONE").unwrap().to_string();
+    let mut timezone = env.get("TIMEZONE").unwrap().to_string();
     timezone = encode(&timezone).to_string();
 
     let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,weather_code,precipitation_probability_mean&hourly=temperature_2m,weather_code&current=temperature_2m,apparent_temperature,weather_code&timezone={}&forecast_days=14&temperature_unit={}", latitude.to_string(), longitude.to_string(), timezone, temp_unit);
@@ -917,8 +932,9 @@ fn get_open_meteo_weather(agent: &Agent, weather_codes: serde_json::Value) -> Re
 /// Using this API: <https://api.weather.gov/>
 /// Used exclusively for the Right Now Details in Legacy mode
 fn get_nws_weather_periods(agent: &Agent) -> Result<Vec<NwsPeriod>, ureq::Error> {
-    let state = env::var("STATE").unwrap();
-    let zone = env::var("ZONE").unwrap();
+    let env = get_env();
+    let state = env.get("STATE").unwrap();
+    let zone = env.get("ZONE").unwrap();
     let url = format!("https://api.weather.gov/zones/{}/{}/forecast", state.to_string(), zone.to_string());
     
     let response = agent.get(url)
@@ -953,14 +969,15 @@ fn configure() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Update config file with new values
 fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>> {
+    let env = get_env();
     // This is all gross, but I don't really care and just want it to work
-    let original_timezone = env::var("TIMEZONE").unwrap().to_string();
-    let original_lat = env::var("LATITUDE").unwrap().to_string();
-    let original_long = env::var("LONGITUDE").unwrap().to_string();
-    let original_state = env::var("STATE").unwrap().to_string();
-    let original_zone = env::var("ZONE").unwrap().to_string();
-    let original_temp_unit = env::var("TEMPERATURE_UNIT").unwrap().to_string();
-    let original_default_legacy = env::var("DEFAULT_LEGACY").unwrap().to_string();
+    let original_timezone = env.get("TIMEZONE").unwrap().to_string();
+    let original_lat = env.get("LATITUDE").unwrap().to_string();
+    let original_long = env.get("LONGITUDE").unwrap().to_string();
+    let original_state = env.get("STATE").unwrap().to_string();
+    let original_zone = env.get("ZONE").unwrap().to_string();
+    let original_temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
+    let original_default_legacy = env.get("DEFAULT_LEGACY").unwrap().to_string();
 
     let mut new_params = HashMap::new();
 
@@ -1028,18 +1045,29 @@ fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>>
 
 
 fn check_legacy_compliance() -> bool {
-    let state = env::var("STATE").unwrap().to_string();
-    let zone = env::var("ZONE").unwrap().to_string();
+    let env = get_env();
+    let state = env.get("STATE").unwrap().to_string();
+    let zone = env.get("ZONE").unwrap().to_string();
+    if zone != "" && state != "" {
+        println!("compliant");
+    } else {
+        println!("non-compliant");
+    }
 
     return zone != "" && state != "";
 }
 
-
-
-fn main() -> io::Result<()> {
-    let _ = configure();
+fn get_env() -> EnvMap {
     let file = dirs::config_dir().expect("main - Could not find config directory").join("Raijin").join(".env");
-    let _ = dotenv::from_path(&file).expect("main - Could not find .env file");
+
+    return EnvLoader::with_path(&file).sequence(EnvSequence::EnvThenInput).load().expect("EnvLoader failed - Check .env existence");
+}
+
+
+fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
+    // let _ = configure();
+    // let file = dirs::config_dir().expect("main - Could not find config directory").join("Raijin").join(".env");
+    // let _ = dotenv::from_path(&file).expect("main - Could not find .env file");
 
     let args = Args::parse();
 
@@ -1056,11 +1084,11 @@ fn main() -> io::Result<()> {
             };
 
             let _ = update_config(config_params);
-            return Ok(());
+            // return Ok(());
         },
         None => {}
     }
-    
+
     let data = include_str!("./weather-codes.json");
     let weather_codes: serde_json::Value = serde_json::from_str(&data).expect("JSON was malformed");
 
@@ -1095,10 +1123,19 @@ fn main() -> io::Result<()> {
     // Get the moon phase and use that to get the right art file
     let phase_file = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", get_moon_phase())).unwrap();
     let moon_phase_art = phase_file.contents_utf8().unwrap();
+
+    return (today, open_meteo_forecast, moon_phase_art.to_string());
+}
+
+
+
+
+fn main() -> io::Result<()> {
+    let (today, open_meteo_forecast, moon_phase_art) = get_data();
     
     // Initialize the TUI
     let mut terminal = ratatui::init();
-    let app_result = App::default().run(&mut terminal, open_meteo_forecast, today, moon_phase_art.to_string());
+    let app_result = App::default().run(&mut terminal, open_meteo_forecast, today, moon_phase_art);
     // Restore the terminal before we leave
     ratatui::restore();
     app_result

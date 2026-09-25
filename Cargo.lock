@@ -10,7 +10,7 @@ dependencies = [
  "clap",
  "crossterm",
  "dirs",
- "dotenv",
+ "dotenvy",
  "include_dir",
  "ratatui",
  "serde",
@@ -540,10 +540,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
+name = "dotenvy"
+version = "0.15.7"
+source = "git+https://github.com/allan2/dotenvy#cf125ddeb263c234ad83a46e5d4115b53888f24f"
+dependencies = [
+ "dotenvy-macros",
+]
+
+[[package]]
+name = "dotenvy-macros"
+version = "0.15.7"
+source = "git+https://github.com/allan2/dotenvy#cf125ddeb263c234ad83a46e5d4115b53888f24f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "either"
