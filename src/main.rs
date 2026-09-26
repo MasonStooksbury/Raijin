@@ -881,7 +881,7 @@ fn get_open_meteo_weather(agent: &Agent, weather_codes: serde_json::Value) -> Re
     let env = get_env();
     let latitude = env.get("LATITUDE").unwrap();
     let longitude = env.get("LONGITUDE").unwrap();
-    let mut temp_unit = env.get("TEMPERATURE_UNIT").unwrap();
+    let mut temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
     if temp_unit == "F" {
         temp_unit = "fahrenheit".to_string();
     } else {
@@ -1058,6 +1058,7 @@ fn check_legacy_compliance() -> bool {
 }
 
 fn get_env() -> EnvMap {
+    let _ = configure();
     let file = dirs::config_dir().expect("main - Could not find config directory").join("Raijin").join(".env");
 
     return EnvLoader::with_path(&file).sequence(EnvSequence::EnvThenInput).load().expect("EnvLoader failed - Check .env existence");
