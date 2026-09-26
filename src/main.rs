@@ -1,9 +1,13 @@
-use dotenvy::{EnvLoader, EnvSequence, EnvMap};
-use serde::{Serialize, Deserialize};
-use urlencoding::encode;
-use std::{fs, io};
+use std::{fs, io, fmt};
 use std::collections::HashMap;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use std::f64::consts::PI;
+use std::default::Default;
+use std::path::{PathBuf};
+use std::time::Instant;
+use serde::{Serialize, Deserialize};
+use educe::Educe;
+use urlencoding::encode;
+use ureq::Agent;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Stylize, Color, Style},
@@ -13,13 +17,13 @@ use ratatui::{
     prelude::{Alignment},
     DefaultTerminal, Frame,
 };
+use ratatui_form::{Form, FormResult, TextInput, Select, Checkbox};
 use chrono::{NaiveDate, Datelike, DateTime, TimeZone, Timelike, Local};
-use std::path::{PathBuf};
+use dotenvy::{EnvLoader, EnvSequence, EnvMap};
 use dirs;
-use ureq::Agent;
 use include_dir::{include_dir, Dir};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use clap::{Parser, Subcommand};
-use std::time::Instant;
 
 static MOON_PHASE_ART_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/moon-phase-art");
 
@@ -78,10 +82,6 @@ struct ConfigParams {
     default_legacy: Option<String>,
 }
 
-
-
-use std::f64::consts::PI;
-use std::fmt;
 
 /// Conversion factor from degrees to radians.
 pub const DEG_TO_RAD: f64 = PI / 180.0;
@@ -325,6 +325,7 @@ fn phase_name(phase_angle: f64) -> &'static str {
     }
 }
 
+/// Calculate and return the name of the current moon phase
 fn get_moon_phase() -> &'static str {
     return phase_name(get_phase_angle());
 }
@@ -579,9 +580,18 @@ fn get_day_from_date(date: &String) -> String {
     }
 }
 
+/// Returns a default Form so App is happy
+fn get_default_form() -> Form {
+   return Form::builder()
+        .title("Not a real form")
+        .build()
+}
+
+
 /// Application state data
-#[derive(Serialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Educe)]
+// #[serde(rename_all = "camelCase")]
+#[educe(Default)]
 struct App {
     open_meteo_forecast: OpenMeteoForecast,
     todays_weather_description: Option<String>,
@@ -593,7 +603,16 @@ struct App {
     is_legacy_default: bool,
     show_legacy_popup: bool,
     show_configuration: bool,
+    #[educe(Default(expression = get_default_form()))]
+    configuration_form: Form,
 }
+
+impl fmt::Debug for App {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("App").finish()
+    }
+}
+
 
 /// Main Ratatui app for Raijin
 impl App {
@@ -611,6 +630,15 @@ impl App {
             self.todays_weather_description = today;
         }
 
+        self.configuration_form = Form::builder()
+            .title("Shipping Information")
+            .text("name", "Full Name")
+                .placeholder("John Doe")
+                .required()
+                .done()
+            .checkbox("newsletter", "Subscribe to newsletter")
+                .done()
+            .build();
 
         self.moon_phase_art = moon_phase_art;
         while !self.exit {
@@ -620,6 +648,7 @@ impl App {
         Ok(())
     }
 
+    /// Renders the "legacy" screen which includes the "Right Now Details" from the NWS data
     fn render_legacy_screen(&self, frame: &mut Frame) {
         use Constraint::{Percentage, Ratio};
 
@@ -698,6 +727,7 @@ impl App {
         }
     }
 
+    /// Renders the "modern" screen which removes the NWS data completely and substitutes it with a fortnight's worth of temperature data
     fn render_modern_screen(&self, frame: &mut Frame) {
         use Constraint::{Percentage, Ratio};
 
@@ -793,6 +823,7 @@ impl App {
         }
     }
 
+    /// Renders the configuration screen where users can change settings rather than editing a file or using the CLI
     fn render_configuration_screen(&self, frame: &mut Frame) {
         // Show the configuration page
         if self.show_configuration {
@@ -847,6 +878,7 @@ impl App {
         self.exit = true;
     }
 
+    /// Toggles between the legacy and modern screens if compliant
     fn toggle_legacy_mode(&mut self) {
         if !self.legacy_compliant {
             self.show_legacy_popup = true;
@@ -855,10 +887,13 @@ impl App {
         self.legacy_mode_active = !self.legacy_mode_active;
     }
 
+    /// Brings up the configuration screen
     fn configure_app(&mut self) {
         self.show_configuration = true;
     }
 
+    /// Refreshes the environment and re-grabs all the data
+    /// TODO: We really need to cache this or something
     fn refresh_app(&mut self) {
         let (today, open_meteo_forecast, moon_phase_art) = get_data();
 
@@ -1043,20 +1078,15 @@ fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-
+/// Check to see if STATE and ZONE are set so we can grab NWS data
 fn check_legacy_compliance() -> bool {
     let env = get_env();
     let state = env.get("STATE").unwrap().to_string();
     let zone = env.get("ZONE").unwrap().to_string();
-    if zone != "" && state != "" {
-        println!("compliant");
-    } else {
-        println!("non-compliant");
-    }
-
     return zone != "" && state != "";
 }
 
+/// Grab the variables for the environment
 fn get_env() -> EnvMap {
     let _ = configure();
     let file = dirs::config_dir().expect("main - Could not find config directory").join("Raijin").join(".env");
@@ -1064,7 +1094,7 @@ fn get_env() -> EnvMap {
     return EnvLoader::with_path(&file).sequence(EnvSequence::EnvThenInput).load().expect("EnvLoader failed - Check .env existence");
 }
 
-
+/// Get data from OpenMeteo and NWS if compliant
 fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
     // let _ = configure();
     // let file = dirs::config_dir().expect("main - Could not find config directory").join("Raijin").join(".env");

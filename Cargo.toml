@@ -11,6 +11,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 crossterm = "0.29.0"
 ratatui = "0.30.2"
+ratatui-form = "0.1.1"
 serde_json = "1.0.140"
 dotenvy = { git = "https://github.com/allan2/dotenvy", features = ["macros"] }
 serde = { version = "1.0.219", features = ["derive"] }
@@ -20,3 +21,8 @@ dirs = "6.0.0"
 ureq = { version = "3.0.12", features = ["json"] }
 include_dir = "0.7.4"
 clap = { version = "4.5.47", features = ["env", "derive"] }
+
+[dependencies.educe]
+version = "0.8.1"
+features = ["Debug", "Default"]
+default-features = false
