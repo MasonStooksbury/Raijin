@@ -831,11 +831,14 @@ impl App {
                 Constraint::Percentage(50),
                 Constraint::Percentage(50), // top and bottom border + content
             );
-            let title = Line::from("SETUP REQUIRED").light_yellow().centered().bold();
-            let content = "\nTo use Legacy Mode, please configure your\nweather ZONE and STATE code.\n\n\nPress Esc to close\nPress C to configure";
-            let popup = Paragraph::new(content).block(Block::bordered().title(title));
+            // let title = Line::from("SETUP REQUIRED").light_yellow().centered().bold();
+            // let content = "\nTo use Legacy Mode, please configure your\nweather ZONE and STATE code.\n\n\nPress Esc to close\nPress C to configure";
+            // let popup = Paragraph::new(content).block(Block::bordered().title(title));
+            // frame.render_widget(Clear, frame.area());
+            // frame.render_widget(popup, area);
+
             frame.render_widget(Clear, frame.area());
-            frame.render_widget(popup, area);
+            self.configuration_form.render(frame.area(), frame.buffer_mut());
         }
     }
 
