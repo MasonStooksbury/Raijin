@@ -10,6 +10,7 @@ use urlencoding::encode;
 use ureq::Agent;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
+    buffer::Buffer,
     style::{Stylize, Color, Style},
     symbols::{Marker},
     text::{Line, Text},
@@ -590,7 +591,6 @@ fn get_default_form() -> Form {
 
 /// Application state data
 #[derive(Educe)]
-// #[serde(rename_all = "camelCase")]
 #[educe(Default)]
 struct App {
     open_meteo_forecast: OpenMeteoForecast,
@@ -631,12 +631,32 @@ impl App {
         }
 
         self.configuration_form = Form::builder()
-            .title("Shipping Information")
-            .text("name", "Full Name")
-                .placeholder("John Doe")
+            .title("Configure Application")
+            .text("ZONE", "Weather Zone")
+                .initial_value(env.get("ZONE").unwrap().to_string())
+                .done()
+            .text("STATE", "State")
+                .initial_value(env.get("STATE").unwrap().to_string())
+                .done()
+            .text("LATITUDE", "Latitude")
+                .initial_value(env.get("LATITUDE").unwrap().to_string())
                 .required()
                 .done()
-            .checkbox("newsletter", "Subscribe to newsletter")
+            .text("LONGITUDE", "Longitude")
+                .initial_value(env.get("LONGITUDE").unwrap().to_string())
+                .required()
+                .done()
+            .text("TIMEZONE", "Timezone")
+                .initial_value(env.get("TIMEZONE").unwrap().to_string())
+                .required()
+                .done()
+            .text("TEMP_UNIT", "Temperature Unit")
+                .initial_value(&self.temp_unit.to_string())
+                .required()
+                .done()
+            .checkbox("DEFAULT_LEGACY", "Default to Legacy Screen")
+                .checked(self.is_legacy_default)
+                .required()
                 .done()
             .build();
 
@@ -843,12 +863,15 @@ impl App {
     }
 
     fn draw(&self, frame: &mut Frame) {
+        if self.show_configuration {
+            self.render_configuration_screen(frame);
+            return;
+        }
         if self.legacy_mode_active && self.legacy_compliant {
             self.render_legacy_screen(frame);
             return;
         }
         self.render_modern_screen(frame);
-        self.render_configuration_screen(frame);
     }
 
     /// Updates the application's state based on user input

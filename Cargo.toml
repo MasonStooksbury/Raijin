@@ -11,7 +11,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 crossterm = "0.29.0"
 ratatui = "0.30.2"
-ratatui-form = "0.1.1"
+ratatui-form = { path = "../ratatui-form" }
 serde_json = "1.0.140"
 dotenvy = { git = "https://github.com/allan2/dotenvy", features = ["macros"] }
 serde = { version = "1.0.219", features = ["derive"] }
