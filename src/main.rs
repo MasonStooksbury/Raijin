@@ -10,7 +10,6 @@ use urlencoding::encode;
 use ureq::Agent;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    buffer::Buffer,
     style::{Stylize, Color, Style},
     symbols::{Marker},
     text::{Line, Text},
@@ -18,7 +17,7 @@ use ratatui::{
     prelude::{Alignment},
     DefaultTerminal, Frame,
 };
-use ratatui_form::{Form, FormResult, TextInput, Select, Checkbox};
+use ratiform::{Form, FormState, builder::FormBuilder};
 use chrono::{NaiveDate, Datelike, DateTime, TimeZone, Timelike, Local};
 use dotenvy::{EnvLoader, EnvSequence, EnvMap};
 use dirs;
@@ -581,11 +580,23 @@ fn get_day_from_date(date: &String) -> String {
     }
 }
 
-/// Returns a default Form so App is happy
-fn get_default_form() -> Form {
-   return Form::builder()
-        .title("Not a real form")
+
+#[derive(Debug, Hash, Eq, PartialEq)]
+enum Field {
+    Zone,
+    State,
+    Latitude,
+    Longitude,
+    Timezone,
+    TempUnit,
+    DefaultLegacy,
+}
+
+/// Returns a default FormState so App is happy
+fn get_default_form() -> FormState<Field> {
+    return FormBuilder::new()
         .build()
+        .expect("get_default_form - FormBuilder failed");
 }
 
 
@@ -604,7 +615,7 @@ struct App {
     show_legacy_popup: bool,
     show_configuration: bool,
     #[educe(Default(expression = get_default_form()))]
-    configuration_form: Form,
+    configuration_form: FormState<Field>,
 }
 
 impl fmt::Debug for App {
@@ -630,35 +641,27 @@ impl App {
             self.todays_weather_description = today;
         }
 
-        self.configuration_form = Form::builder()
-            .title("Configure Application")
-            .text("ZONE", "Weather Zone")
-                .initial_value(env.get("ZONE").unwrap().to_string())
-                .done()
-            .text("STATE", "State")
-                .initial_value(env.get("STATE").unwrap().to_string())
-                .done()
-            .text("LATITUDE", "Latitude")
-                .initial_value(env.get("LATITUDE").unwrap().to_string())
-                .required()
-                .done()
-            .text("LONGITUDE", "Longitude")
-                .initial_value(env.get("LONGITUDE").unwrap().to_string())
-                .required()
-                .done()
-            .text("TIMEZONE", "Timezone")
-                .initial_value(env.get("TIMEZONE").unwrap().to_string())
-                .required()
-                .done()
-            .text("TEMP_UNIT", "Temperature Unit")
-                .initial_value(&self.temp_unit.to_string())
-                .required()
-                .done()
-            .checkbox("DEFAULT_LEGACY", "Default to Legacy Screen")
-                .checked(self.is_legacy_default)
-                .required()
-                .done()
-            .build();
+        self.configuration_form = FormBuilder::new()
+            .single_line(Field::Zone, "Weather Zone")
+                .value(env.get("ZONE").unwrap())
+            .single_line(Field::State, "State")
+                .value(env.get("STATE").unwrap())
+            .single_line(Field::Latitude, "Latitude")
+                .value(env.get("LATITUDE").unwrap())
+                .required("Latitude is required".to_owned())
+            .single_line(Field::Longitude, "Longitude")
+                .value(env.get("LONGITUDE").unwrap())
+                .required("Longitude is required".to_owned())
+            .single_line(Field::Timezone, "Timezone")
+                .value(env.get("TIMEZONE").unwrap())
+                .required("Timezone is required".to_owned())
+            .single_line(Field::TempUnit, "Temperature Units")
+                .value(env.get("TEMPERATURE_UNIT").unwrap())
+                .required("Temperature Units is required".to_owned())
+            .checkbox(Field::DefaultLegacy, "Default to Legacy Screen")
+                .checked(env.get("DEFAULT_LEGACY").unwrap() == "true")
+            .build()
+            .expect("App - FormBuilder failed");
 
         self.moon_phase_art = moon_phase_art;
         while !self.exit {
@@ -844,7 +847,7 @@ impl App {
     }
 
     /// Renders the configuration screen where users can change settings rather than editing a file or using the CLI
-    fn render_configuration_screen(&self, frame: &mut Frame) {
+    fn render_configuration_screen(&mut self, frame: &mut Frame) {
         // Show the configuration page
         if self.show_configuration {
             let area = frame.area().centered(
@@ -857,12 +860,18 @@ impl App {
             // frame.render_widget(Clear, frame.area());
             // frame.render_widget(popup, area);
 
-            frame.render_widget(Clear, frame.area());
-            self.configuration_form.render(frame.area(), frame.buffer_mut());
+            // frame.render_widget(Clear, frame.area());
+            // self.configuration_form.render(frame.area(), frame.buffer_mut());
+
+            frame.render_stateful_widget(Form::default(), area, &mut self.configuration_form);
+
+            if let Some(position) = self.configuration_form.cursor_position() {
+                frame.set_cursor_position(position);
+            }
         }
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    fn draw(&mut self, frame: &mut Frame) {
         if self.show_configuration {
             self.render_configuration_screen(frame);
             return;
@@ -882,11 +891,31 @@ impl App {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                 if !self.show_configuration {
                     self.handle_key_event(key_event)
+                } else {
+                    self.handle_configuration_key_event(key_event)
                 }
             }
             _ => {}
         };
         Ok(())
+    }
+
+    fn handle_configuration_key_event(&mut self, key_event: KeyEvent) {
+        self.configuration_form.handle_input(key_event);
+
+        match self.configuration_form.result() {
+            ratiform::FormResult::Submitted => self.form_submitted(),
+            ratiform::FormResult::Cancelled => self.form_cancelled(),
+            ratiform::FormResult::Working => {}
+        }
+    }
+
+    fn form_submitted(&mut self) {
+        println!("form submitted")
+    }
+
+    fn form_cancelled(&mut self) {
+        self.show_configuration = false;
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) {
@@ -1115,7 +1144,7 @@ fn check_legacy_compliance() -> bool {
 /// Grab the variables for the environment
 fn get_env() -> EnvMap {
     let _ = configure();
-    let file = dirs::config_dir().expect("main - Could not find config directory").join("Raijin").join(".env");
+    let file = dirs::config_dir().expect("get_env - Could not find config directory").join("Raijin").join(".env");
 
     return EnvLoader::with_path(&file).sequence(EnvSequence::EnvThenInput).load().expect("EnvLoader failed - Check .env existence");
 }

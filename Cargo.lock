@@ -14,7 +14,7 @@ dependencies = [
  "educe",
  "include_dir",
  "ratatui",
- "ratatui-form",
+ "ratiform",
  "serde",
  "serde_json",
  "ureq",
@@ -1546,18 +1546,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ratatui-form"
-version = "0.1.1"
-dependencies = [
- "crossterm",
- "ratatui",
- "regex",
- "serde",
- "serde_json",
- "unicode-width",
-]
-
-[[package]]
 name = "ratatui-macros"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1606,6 +1594,15 @@ dependencies = [
  "time",
  "unicode-segmentation",
  "unicode-width",
+]
+
+[[package]]
+name = "ratiform"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e111e5c30c9edbb71657783b31cb62fb764f66892cfea9f0b62f0681ff586a9a"
+dependencies = [
+ "ratatui",
 ]
 
 [[package]]
