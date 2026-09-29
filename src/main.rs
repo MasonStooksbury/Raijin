@@ -644,8 +644,10 @@ impl App {
         self.configuration_form = FormBuilder::new()
             .single_line(Field::Zone, "Weather Zone")
                 .value(env.get("ZONE").unwrap())
+                .optional()
             .single_line(Field::State, "State")
                 .value(env.get("STATE").unwrap())
+                .optional()
             .single_line(Field::Latitude, "Latitude")
                 .value(env.get("LATITUDE").unwrap())
                 .required("Latitude is required".to_owned())
@@ -854,14 +856,6 @@ impl App {
                 Constraint::Percentage(50),
                 Constraint::Percentage(50), // top and bottom border + content
             );
-            // let title = Line::from("SETUP REQUIRED").light_yellow().centered().bold();
-            // let content = "\nTo use Legacy Mode, please configure your\nweather ZONE and STATE code.\n\n\nPress Esc to close\nPress C to configure";
-            // let popup = Paragraph::new(content).block(Block::bordered().title(title));
-            // frame.render_widget(Clear, frame.area());
-            // frame.render_widget(popup, area);
-
-            // frame.render_widget(Clear, frame.area());
-            // self.configuration_form.render(frame.area(), frame.buffer_mut());
 
             frame.render_stateful_widget(Form::default(), area, &mut self.configuration_form);
 
@@ -911,7 +905,10 @@ impl App {
     }
 
     fn form_submitted(&mut self) {
-        println!("form submitted")
+        // let values: HashMap<Field, String> = self.configuration_form.values().collect();
+        // println!("{:?}", values.get(&Field::Timezone));
+        self.configuration_form.value(&Field::Timezone).unwrap();
+        self.show_configuration = false;
     }
 
     fn form_cancelled(&mut self) {
