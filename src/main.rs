@@ -17,6 +17,7 @@ use ratatui::{
     prelude::{Alignment},
     DefaultTerminal, Frame,
 };
+use Constraint::{Percentage, Ratio};
 use ratiform::{Form, FormState, builder::FormBuilder};
 use chrono::{NaiveDate, Datelike, DateTime, TimeZone, Timelike, Local};
 use dotenvy::{EnvLoader, EnvSequence, EnvMap};
@@ -624,6 +625,32 @@ impl fmt::Debug for App {
     }
 }
 
+fn get_configuration_form() -> FormState<Field> {
+    let env = get_env();
+    return FormBuilder::new()
+        .single_line(Field::Zone, "Weather Zone")
+            .value(env.get("ZONE").unwrap())
+            .optional()
+        .single_line(Field::State, "State")
+            .value(env.get("STATE").unwrap())
+            .optional()
+        .single_line(Field::Latitude, "Latitude")
+            .value(env.get("LATITUDE").unwrap())
+            .required("Latitude is required".to_owned())
+        .single_line(Field::Longitude, "Longitude")
+            .value(env.get("LONGITUDE").unwrap())
+            .required("Longitude is required".to_owned())
+        .single_line(Field::Timezone, "Timezone")
+            .value(env.get("TIMEZONE").unwrap())
+            .required("Timezone is required".to_owned())
+        .single_line(Field::TempUnit, "Temperature Units")
+            .value(env.get("TEMPERATURE_UNIT").unwrap())
+            .required("Temperature Units is required".to_owned())
+        .checkbox(Field::DefaultLegacy, "Default to Legacy Screen")
+            .checked(env.get("DEFAULT_LEGACY").unwrap() == "true")
+        .build()
+        .expect("App - FormBuilder failed");
+}
 
 /// Main Ratatui app for Raijin
 impl App {
@@ -641,29 +668,7 @@ impl App {
             self.todays_weather_description = today;
         }
 
-        self.configuration_form = FormBuilder::new()
-            .single_line(Field::Zone, "Weather Zone")
-                .value(env.get("ZONE").unwrap())
-                .optional()
-            .single_line(Field::State, "State")
-                .value(env.get("STATE").unwrap())
-                .optional()
-            .single_line(Field::Latitude, "Latitude")
-                .value(env.get("LATITUDE").unwrap())
-                .required("Latitude is required".to_owned())
-            .single_line(Field::Longitude, "Longitude")
-                .value(env.get("LONGITUDE").unwrap())
-                .required("Longitude is required".to_owned())
-            .single_line(Field::Timezone, "Timezone")
-                .value(env.get("TIMEZONE").unwrap())
-                .required("Timezone is required".to_owned())
-            .single_line(Field::TempUnit, "Temperature Units")
-                .value(env.get("TEMPERATURE_UNIT").unwrap())
-                .required("Temperature Units is required".to_owned())
-            .checkbox(Field::DefaultLegacy, "Default to Legacy Screen")
-                .checked(env.get("DEFAULT_LEGACY").unwrap() == "true")
-            .build()
-            .expect("App - FormBuilder failed");
+        self.configuration_form = get_configuration_form();
 
         self.moon_phase_art = moon_phase_art;
         while !self.exit {
@@ -675,8 +680,6 @@ impl App {
 
     /// Renders the "legacy" screen which includes the "Right Now Details" from the NWS data
     fn render_legacy_screen(&self, frame: &mut Frame) {
-        use Constraint::{Percentage, Ratio};
-
         let vertical = Layout::vertical([Percentage(50), Percentage(50)]);
         let [today_area, forecast_area] = vertical.areas(frame.area());
         
@@ -754,8 +757,6 @@ impl App {
 
     /// Renders the "modern" screen which removes the NWS data completely and substitutes it with a fortnight's worth of temperature data
     fn render_modern_screen(&self, frame: &mut Frame) {
-        use Constraint::{Percentage, Ratio};
-
         let vertical = Layout::vertical([Percentage(70), Percentage(30)]);
         let [today_area, forecast_area] = vertical.areas(frame.area());
         
@@ -852,12 +853,33 @@ impl App {
     fn render_configuration_screen(&mut self, frame: &mut Frame) {
         // Show the configuration page
         if self.show_configuration {
-            let area = frame.area().centered(
+            let vertical = Layout::vertical([Percentage(60), Percentage(40)]);
+            let [top, bottom] = vertical.areas(frame.area());
+
+            let form_area = top.centered(
                 Constraint::Percentage(50),
-                Constraint::Percentage(50), // top and bottom border + content
+                Constraint::Percentage(50),
             );
 
-            frame.render_stateful_widget(Form::default(), area, &mut self.configuration_form);
+            frame.render_stateful_widget(Form::default(), form_area, &mut self.configuration_form);
+
+            let legend_area = bottom.centered(
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            );
+            let block = Block::default()
+                .title(" LEGEND ")
+                .borders(Borders::ALL)
+                .padding(Padding::uniform(1));
+            let inner = block.inner(legend_area);
+            let text = vec![
+                Line::from(vec!["Next field:       ".bold(), "TAB".into()]),
+                Line::from(vec!["Previous field:   ".bold(), "SHIFT + TAB".into()]),
+                Line::from(vec!["Save changes:     ".bold(), "ENTER".into()]),
+                Line::from(vec!["Cancel:           ".bold(), "ESC".into()]),
+            ];
+
+            frame.render_widget(Paragraph::new(text).block(block), legend_area);
 
             if let Some(position) = self.configuration_form.cursor_position() {
                 frame.set_cursor_position(position);
@@ -905,9 +927,25 @@ impl App {
     }
 
     fn form_submitted(&mut self) {
-        // let values: HashMap<Field, String> = self.configuration_form.values().collect();
-        // println!("{:?}", values.get(&Field::Timezone));
-        self.configuration_form.value(&Field::Timezone).unwrap();
+        let file: PathBuf = dirs::config_dir()
+            .expect("form_submitted - Could not find config directory")
+            .join("Raijin")
+            .join(".env");
+
+        let file_data = format!(
+            "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"",
+            self.configuration_form.value(&Field::Zone).unwrap(),
+            self.configuration_form.value(&Field::State).unwrap(),
+            self.configuration_form.value(&Field::Latitude).unwrap(),
+            self.configuration_form.value(&Field::Longitude).unwrap(),
+            self.configuration_form.value(&Field::Timezone).unwrap(),
+            self.configuration_form.value(&Field::TempUnit).unwrap(),
+            self.configuration_form.value(&Field::DefaultLegacy).unwrap(),
+        );
+        let _ = fs::write(&file, file_data);
+        self.configuration_form.commit();
+
+        self.refresh_app();
         self.show_configuration = false;
     }
 
@@ -947,13 +985,19 @@ impl App {
     /// Refreshes the environment and re-grabs all the data
     /// TODO: We really need to cache this or something
     fn refresh_app(&mut self) {
+        let env = get_env();
         let (today, open_meteo_forecast, moon_phase_art) = get_data();
 
+        self.is_legacy_default = env.get("DEFAULT_LEGACY").unwrap() == "true";
         self.legacy_mode_active = self.is_legacy_default;
         self.legacy_compliant = today.is_some();
         if self.legacy_compliant {
             self.todays_weather_description = today;
         }
+
+        self.configuration_form = get_configuration_form();
+        self.temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
+        self.show_legacy_popup = false;
 
         self.open_meteo_forecast = open_meteo_forecast;
         self.moon_phase_art = moon_phase_art;
@@ -1192,16 +1236,16 @@ fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
     // If the legacy variables aren't set, don't setup the "Right Now Details"
     let mut today = None;
     if is_legacy_compliant {
-        let now = Instant::now();
+        // let now = Instant::now();
         let nws_periods = get_nws_weather_periods(&agent).unwrap();
-        println!("nws_periods: {:.2?}", now.elapsed());
+        // println!("nws_periods: {:.2?}", now.elapsed());
         today = Some(nws_periods[0].detailed_forecast.clone());
     }
 
     // Get all the weather data
-    let now = Instant::now();
+    // let now = Instant::now();
     let open_meteo_forecast = get_open_meteo_weather(&agent, weather_codes).unwrap();
-    println!("openmeteo: {:.2?}", now.elapsed());
+    // println!("openmeteo: {:.2?}", now.elapsed());
 
     // Get the moon phase and use that to get the right art file
     let phase_file = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", get_moon_phase())).unwrap();
