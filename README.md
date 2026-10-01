@@ -11,11 +11,6 @@
 
 <div align="center">
   <img src="./screenshots/global-mode.png" alt="A screenshot of the application Global Mode"/>
-  <p>
-  <sub>
-  (NOTE: I'm using WezTerm with the "Gruvbox Dark (Gogh)" theme. Yours may look slightly different)
-  </sub>
-  </p>
 </div>
 
 <div align="center">
@@ -37,7 +32,7 @@ Installation via `cargo` can be done by installing the [Raijin](https://crates.i
 ```bash
 cargo install Raijin
 ```
-`NOTE: The default location is Knoxville, TN. If you'd like to change it, continue on to the Configuration section below`
+`NOTE: The default lat/long is somewhere in Tennessee. If you'd like to change it, continue on to the Configuration section below`
 
 <br>
 

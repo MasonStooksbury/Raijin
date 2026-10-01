@@ -1160,7 +1160,36 @@ fn configure() -> Result<(), Box<dyn std::error::Error>> {
     return Ok(());
 }
 
+/// Checks that all the necessary fields are set in the env so the user doesn't have to think about it
+fn assert_env_health() -> Result<(), Box<dyn std::error::Error>> {
+    let env = get_env();
 
+    let state = env.get("STATE").unwrap_or(&"".to_string()).to_string();
+    let zone = env.get("ZONE").unwrap_or(&"".to_string()).to_string();
+    let timezone = env.get("TIMEZONE").unwrap_or(&"America/New_York".to_string()).to_string();
+    let lat = env.get("LATITUDE").unwrap_or(&"35.9626444".to_string()).to_string();
+    let long = env.get("LONGITUDE").unwrap_or(&"-83.9167239".to_string()).to_string();
+    let temp_unit = env.get("TEMPERATURE_UNIT").unwrap_or(&"F".to_string()).to_string();
+    let default_legacy = env.get("DEFAULT_LEGACY").unwrap_or(&"false".to_string()).to_string();
+
+    let file: PathBuf = dirs::config_dir()
+        .expect("assert_env_health - Could not find config directory")
+        .join("Raijin")
+        .join(".env");
+
+    let file_data = format!(
+        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"",
+        zone,
+        state,
+        lat,
+        long,
+        timezone,
+        temp_unit,
+        default_legacy,
+    );
+    fs::write(&file, file_data)?;
+    Ok(())
+}
 
 /// Update config file with new values
 fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>> {
@@ -1317,6 +1346,7 @@ fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
 
 
 fn main() -> io::Result<()> {
+    let _ = assert_env_health();
     let (today, open_meteo_forecast, moon_phase_art) = get_data();
     
     // Initialize the TUI
