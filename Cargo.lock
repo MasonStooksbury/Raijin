@@ -15,6 +15,7 @@ dependencies = [
  "include_dir",
  "ratatui",
  "ratiform",
+ "regex",
  "serde",
  "serde_json",
  "ureq",

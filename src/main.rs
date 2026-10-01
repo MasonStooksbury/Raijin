@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::default::Default;
 use std::path::{PathBuf};
-use std::time::Instant;
+// use std::time::Instant;
+use regex::Regex;
 use serde::{Serialize, Deserialize};
 use educe::Educe;
 use urlencoding::encode;
@@ -18,7 +19,7 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 use Constraint::{Percentage, Ratio};
-use ratiform::{Form, FormState, builder::FormBuilder};
+use ratiform::{Form, FormState, builder::FormBuilder, validators};
 use chrono::{NaiveDate, Datelike, DateTime, TimeZone, Timelike, Local};
 use dotenvy::{EnvLoader, EnvSequence, EnvMap};
 use dirs;
@@ -625,27 +626,73 @@ impl fmt::Debug for App {
     }
 }
 
+
+/// Builds and returns the form for the configuration screen
 fn get_configuration_form() -> FormState<Field> {
     let env = get_env();
     return FormBuilder::new()
-        .single_line(Field::Zone, "Weather Zone")
+        .single_line(Field::Zone, "Weather Zone (US Only)")
             .value(env.get("ZONE").unwrap())
             .optional()
-        .single_line(Field::State, "State")
+            .normalizer(|s| s.to_uppercase())
+            .validator(validators::max_length(
+                6,
+                "Weather Zone must only be 6 characters (e.g. TNZ069)".to_owned()
+            ))
+            .validator(|value: &str| {
+                let regex = Regex::new(r"^[A-Z]{3}\d{3}$").unwrap();
+                (regex.is_match(value))
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "Weather Zone must be three letters followed by three numbers".to_owned() 
+                    })
+            })
+        .single_line(Field::State, "State Code (US Only)")
             .value(env.get("STATE").unwrap())
             .optional()
+            .normalizer(|s| s.to_uppercase())
+            .validator(validators::max_length(
+                2,
+                "State Code must only be two characters (e.g. TN, KY, PA, etc)".to_owned()
+            ))
+            .validator(|value: &str| {
+                let regex = Regex::new(r"^[A-Z]{2}$").unwrap();
+                (regex.is_match(value))
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "State Code must be two letters".to_owned() 
+                    })
+            })
         .single_line(Field::Latitude, "Latitude")
             .value(env.get("LATITUDE").unwrap())
             .required("Latitude is required".to_owned())
+            .validator(validators::parsable::<f32>(
+                "Latitude must be a number".to_owned()
+            ))
         .single_line(Field::Longitude, "Longitude")
             .value(env.get("LONGITUDE").unwrap())
             .required("Longitude is required".to_owned())
+            .validator(validators::parsable::<f32>(
+                "Longitude must be a number".to_owned()
+            ))
         .single_line(Field::Timezone, "Timezone")
             .value(env.get("TIMEZONE").unwrap())
             .required("Timezone is required".to_owned())
         .single_line(Field::TempUnit, "Temperature Units")
             .value(env.get("TEMPERATURE_UNIT").unwrap())
             .required("Temperature Units is required".to_owned())
+            .normalizer(|s| s.to_uppercase())
+            .validator(validators::max_length(
+                1,
+                "Temperature Units must only be one character long (e.g. C or F)".to_owned(),
+            ))
+            .validator(|value: &str| {
+                (value == "F" || value == "C")
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "Temperature Units must either be 'C' or 'F'".to_owned()
+                    })
+            })
         .checkbox(Field::DefaultLegacy, "Default to Legacy Screen")
             .checked(env.get("DEFAULT_LEGACY").unwrap() == "true")
         .build()
@@ -691,15 +738,22 @@ impl App {
 
         let current_weather = Layout::vertical([Ratio(1,2), Ratio(1,2)]);
         let [quick_stats, description] = current_weather.areas(current);
- 
+
+        // Setup bottom area for 4-cast and command bar
+        let forecast_and_commands = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
+        let [forecast_blocks, command_bar] = forecast_and_commands.areas(forecast_area);
         let outer_block = Block::bordered().title(Line::from(" 4-cast ").light_magenta().centered().bold()).padding(Padding::new(0,0,1,0));
         let inner_block = Block::bordered();
-        let inner_area = outer_block.inner(forecast_area);
+        let inner_area = outer_block.inner(forecast_blocks);
 
         let upcoming_weather = Layout::horizontal([Ratio(1,4), Ratio(1,4), Ratio(1,4), Ratio(1,4)]);
         let [slot1, slot2, slot3, slot4] = upcoming_weather.areas(inner_area);
+
+        // Render command bar
+        let commands = Line::from("R - refresh   |   C - configure   |   L - legacy mode   |   Q - quit").light_yellow().centered();
+        frame.render_widget(commands, command_bar);
         
-        frame.render_widget(outer_block, forecast_area);
+        frame.render_widget(outer_block, forecast_blocks);
         frame.render_widget(inner_block, inner_area);
 
         frame.render_widget(Block::bordered(), mid_top);
@@ -771,15 +825,22 @@ impl App {
 
         let topest = Layout::horizontal([Ratio(1,2), Ratio(1,2)]);
         let [quick_stats, mid_top] = topest.areas(today_info);
- 
+         
+        // Setup bottom area for 4-cast and command bar
+        let forecast_and_commands = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
+        let [forecast_blocks, command_bar] = forecast_and_commands.areas(forecast_area);
         let outer_block = Block::bordered().title(Line::from(" 4-cast ").light_magenta().centered().bold()).padding(Padding::new(0,0,1,0));
         let inner_block = Block::bordered();
-        let inner_area = outer_block.inner(forecast_area);
-
+        let inner_area = outer_block.inner(forecast_blocks);
+        
         let upcoming_weather = Layout::horizontal([Ratio(1,4), Ratio(1,4), Ratio(1,4), Ratio(1,4)]);
         let [slot1, slot2, slot3, slot4] = upcoming_weather.areas(inner_area);
+
+        // Render command bar
+        let commands = Line::from("R - refresh   |   C - configure   |   L - legacy mode   |   Q - quit").light_yellow().centered();
+        frame.render_widget(commands, command_bar);
         
-        frame.render_widget(outer_block, forecast_area);
+        frame.render_widget(outer_block, forecast_blocks);
         frame.render_widget(inner_block, inner_area);
 
         frame.render_widget(Block::bordered(), mid_top);
@@ -853,25 +914,27 @@ impl App {
     fn render_configuration_screen(&mut self, frame: &mut Frame) {
         // Show the configuration page
         if self.show_configuration {
-            let vertical = Layout::vertical([Percentage(60), Percentage(40)]);
+            // Some of these measurements look dumb, but I'm trying to get it to look decent on most screens
+            //     and frankly, I don't know a better way to do it; so this will work for now :)
+            let vertical = Layout::vertical([Ratio(1,2), Ratio(1,2)]);
             let [top, bottom] = vertical.areas(frame.area());
 
             let form_area = top.centered(
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
+                Constraint::Percentage(70),
+                Constraint::Percentage(60),
             );
 
             frame.render_stateful_widget(Form::default(), form_area, &mut self.configuration_form);
 
             let legend_area = bottom.centered(
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
+                Constraint::Percentage(70),
+                Constraint::Percentage(60),
             );
+
             let block = Block::default()
                 .title(" LEGEND ")
                 .borders(Borders::ALL)
                 .padding(Padding::uniform(1));
-            let inner = block.inner(legend_area);
             let text = vec![
                 Line::from(vec!["Next field:       ".bold(), "TAB".into()]),
                 Line::from(vec!["Previous field:   ".bold(), "SHIFT + TAB".into()]),
@@ -950,6 +1013,7 @@ impl App {
     }
 
     fn form_cancelled(&mut self) {
+        self.configuration_form.reset();
         self.show_configuration = false;
     }
 
@@ -1192,10 +1256,6 @@ fn get_env() -> EnvMap {
 
 /// Get data from OpenMeteo and NWS if compliant
 fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
-    // let _ = configure();
-    // let file = dirs::config_dir().expect("main - Could not find config directory").join("Raijin").join(".env");
-    // let _ = dotenv::from_path(&file).expect("main - Could not find .env file");
-
     let args = Args::parse();
 
     match &args.command {
@@ -1211,7 +1271,6 @@ fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
             };
 
             let _ = update_config(config_params);
-            // return Ok(());
         },
         None => {}
     }

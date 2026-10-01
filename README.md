@@ -4,13 +4,22 @@
 <br />
 
   <p>
-    A free, simple weather TUI that pulls data without the need for an API key, account, or subscription. Weather data is from <a href="https://api.weather.gov/">NWS</a> and <a href="https://open-meteo.com/en/docs">OpenMeteo</a>. Moon phase data is from <a href="https://aa.usno.navy.mil/data/MoonPhases">US Navy</a> (Kinda weird, I know. But they were faster than ViewBits). <br /> Only supports Mac and Linux at the moment.
+    A free, simple weather TUI that pulls data without the need for an API key, account, or subscription. Weather data is from <a href="https://api.weather.gov/">NWS</a> and <a href="https://open-meteo.com/en/docs">OpenMeteo</a>. Moon phase data is done with math (see how below)<br /> Only supports Mac and Linux at the moment.
   </p>
 
 </div>
 
 <div align="center">
-  <img src="screenshot.png" alt="A screenshot of the application"/>
+  <img src="./screenshots/global-mode.png" alt="A screenshot of the application Global Mode"/>
+  <p>
+  <sub>
+  (NOTE: I'm using WezTerm with the "Gruvbox Dark (Gogh)" theme. Yours may look slightly different)
+  </sub>
+  </p>
+</div>
+
+<div align="center">
+  <img src="./screenshots/legacy-mode.png" alt="A screenshot of the application in Legacy Mode"/>
   <p>
   <sub>
   (NOTE: I'm using WezTerm with the "Gruvbox Dark (Gogh)" theme. Yours may look slightly different)
@@ -36,6 +45,38 @@ cargo install Raijin
 
 Once you've completed the instructions below, run by typing `Raijin` in your terminal
 
+<br>
+
+## Setup
+
+There are two ways to setup Raijin: for Legacy mode, or the default "Global" mode. Legacy mode gathers some data from the NWS
+and only works for places in the US. Whereas Global mode only uses your Lat/Long/Timezone data and should work everywhere.
+
+By default, the app sets you up in Knoxville, TN. So all you need to do is run the app, go to the configuration page, and change the necessary fields.
+
+### Global Mode Setup
+
+First, you'll need to get some data about your location (namely, your latitude and longitude)
+- Navigate to the [FindLatLng](https://www.findlatlng.org/en) website (there are many websites to find your latitude and longitude, this was just the first one I found)
+- Type in your location in the search bar and click `Search`
+- Jot down the latitude and longitude for this location
+
+Next, you need to figure out what timezone you're in and its IANA name
+- Navigate to the [AddEvent](https://www.addevent.com/c/documentation/tools/time-zone-lookup) website to look this up for free
+- Type in your location and hit `Enter`
+- Once a timezone pops up, click the green `Copy` button for that result to copy the timezone to your clipboard
+
+Finally, enter this info on the Configuration screen
+- Run the application by typing `Raijin` in your terminal
+- Hit the `C` key to open the Configuration screen
+- Enter the information you just gathered and hit `Enter`
+
+From here the app will reload everything and update the screen for you
+
+<br><br>
+
+### Legacy Mode Setup
+
 First, you'll need to get some data about your location (namely, your latitude, longitude, and weather zone ID)
 - Navigate to the [NWS](https://www.weather.gov/) website
 - Type in your location in the top left search bar and click `Go`
@@ -49,9 +90,10 @@ Next, you need to figure out what timezone you're in and its IANA name
 - Type in your location using the `CITY, STATE` format (e.g. Knoxville, TN) and hit `Enter`
 - Once a timezone pops up, click the green `Copy` button for that result to copy the timezone to your clipboard
 
-Now that we have the 5 pieces of data we need (latitude, longitude, 2-letter state code, weather zone ID, and timezone), let's put them into an environment file
-- Navigate to `~/.config/Raijin/.env` on your machine
-- Edit this file and update it with the fields you collected (make sure they have double-quotes around them like in the example)
+Now that we have the 5 pieces of data we need (latitude, longitude, 2-letter state code, weather zone ID, and timezone), let's enter this info on the Configuration screen
+- Run the application by typing `Raijin` in your terminal
+- Hit the `C` key to open the Configuration screen
+- Enter the information you just gathered and hit `Enter`
 
 <br>
 
@@ -61,9 +103,7 @@ When editing the logo.txt or any of the moon phases, make sure every line has th
 <br>
 
 ## TODO
-I did this project over the course of a week to continue sharpening my Rust skills as well as work with the Ratatui library. While I'm proud of what I made, I am a little burned out due to working on it a lot in such a short time. That being said, if/when I come back to it here's what I'd like to add (or you can contribute!):
-
-- Tidy up the code. (I am by no means a great Rust programmer and I'm sure I've done a lot that isn't very idiomatic. <sub>You know, like naming my crate with a capital letter? lol</sub>)
+- Add async support so we load faster and then update the screen
 - Rework config file setup. (Right now the way I create a config file for this is pretty lazy by just looking under `~/.config` and creating a file. But this can break if people have this symlinked for dotfile stuff. I'm sure there's a more robust way to do this)
 - Test on Windows/add Windows support if it doesn't work (it should, I just haven't tested it yet)
 
