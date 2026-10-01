@@ -42,7 +42,7 @@
   - Data/environment variables can now be reloaded by pressing "R"
     - (there's no real need to do this because whenever you change the config via the Configuration screen it auto-saves/reloads, but it is helpful if you leave
     the app open all day and wanna re-grab the latest data)
-  - In-app configuration screen (thanks to [ratiform]())
+  - In-app configuration screen (thanks to [ratiform](https://github.com/marc0x71/ratiform))
   - Fancy command bar at the bottom
 
 <br>
