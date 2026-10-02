@@ -27,10 +27,19 @@
   </p>
 </div>
 
+<div align="center">
+  <img src="./screenshots/configuration-screen.png" alt="A screenshot of the Configuration screen"/>
+  <p>
+    <sub>
+      Screenshot of the new, in-app Configuration screen
+    </sub>
+  </p>
+</div>
+
 <br>
 
 ## New Features!
-  - New Global mode (for my non-US friends!)
+  - New Global mode (for my non-US friends! Enabled by default)
     - Layout, new Fortnight Temperature plot, and code enhancements by [Torfkopp](https://github.com/Torfkopp)
   - Legacy mode is now toggleable and off by default (this mode really only works for US users anyway)
   - You can now edit data in the app via the new Configuration screen! (no more manual edits!)
@@ -70,7 +79,8 @@ Once you've completed the instructions below, run by typing `Raijin` in your ter
 There are two ways to setup Raijin: for Legacy mode, or the default "Global" mode. Legacy mode gathers some data from the NWS
 and only works for places in the US. Whereas Global mode only uses your Lat/Long/Timezone data and should work everywhere.
 
-By default, the app sets you up in Knoxville, TN. So all you need to do is run the app, go to the configuration page, and change the necessary fields.
+By default, the app sets you up somewhere in Tennessee. So all you need to do is run the app, go to the configuration page, and change the necessary fields.
+Optionally, you can use the CLI and configure it that way.
 
 ### Global Mode Setup
 
@@ -82,7 +92,7 @@ First, you'll need to get some data about your location (namely, your latitude a
 Next, you need to figure out what timezone you're in and its IANA name
 - Navigate to the [AddEvent](https://www.addevent.com/c/documentation/tools/time-zone-lookup) website to look this up for free
 - Type in your location and hit `Enter`
-- Once a timezone pops up, click the green `Copy` button for that result to copy the timezone to your clipboard
+- Once a timezone pops up, jot down the name for later (e.g. America/New_York)
 
 Finally, enter this info on the Configuration screen
 - Run the application by typing `Raijin` in your terminal
@@ -124,6 +134,8 @@ When editing the logo.txt or any of the moon phases, make sure every line has th
 - Add async support so we load faster and then update the screen
 - Rework config file setup. (Right now the way I create a config file for this is pretty lazy by just looking under `~/.config` and creating a file. But this can break if people have this symlinked for dotfile stuff. I'm sure there's a more robust way to do this)
 - Test on Windows/add Windows support if it doesn't work (it should, I just haven't tested it yet)
+- Auto-refresh? Idk if anyone actually wants this, but if you had this open on a dedicated display, you could have it always have fresh data without needing to interact with this.
+  If this seems interesting to you, please make an issue about it (or if it already exists, comment/like it so I know it'd be useful for you)
 
 <br>
 
