@@ -699,10 +699,16 @@ fn get_configuration_form() -> FormState<Field> {
         .expect("App - FormBuilder failed");
 }
 
+
 /// Main Ratatui app for Raijin
 impl App {
     /// Runs the application's main loop until the user quits
-    fn run(&mut self, terminal: &mut DefaultTerminal, forecast: OpenMeteoForecast, today: Option<String>, moon_phase_art: String) -> io::Result<()> {
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        // Render a loading screen before getting data. That way the app loads instantly and feels a bit snappier
+        terminal.draw(|frame| self.render_loading_screen(frame))?;
+
+        let (today, forecast, moon_phase_art) = get_data();
+
         let env = get_env();
         self.temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
         self.is_legacy_default = env.get("DEFAULT_LEGACY").unwrap() == "true";
@@ -723,6 +729,19 @@ impl App {
             self.handle_events()?;
         }
         Ok(())
+    }
+
+    /// Renders a "loading screen" so that the app instantly opens. Makes things feel a bit snappier
+    fn render_loading_screen(&self, frame: &mut Frame) {
+        let area = frame.area().centered(
+            Constraint::Percentage(25),
+            Constraint::Length(9), // top and bottom border + content
+        );
+        let title = Line::from("LOADING").light_yellow().centered().bold();
+        let content = "\nGrabbing weather data now...";
+        let popup = Paragraph::new(content).block(Block::bordered().title(title));
+        frame.render_widget(Clear, area);
+        frame.render_widget(popup, area);
     }
 
     /// Renders the "legacy" screen which includes the "Right Now Details" from the NWS data
@@ -1344,14 +1363,14 @@ fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
 
 
 
-
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     let _ = assert_env_health();
-    let (today, open_meteo_forecast, moon_phase_art) = get_data();
     
     // Initialize the TUI
     let mut terminal = ratatui::init();
-    let app_result = App::default().run(&mut terminal, open_meteo_forecast, today, moon_phase_art);
+    let app_result = App::default().run(&mut terminal);
+
     // Restore the terminal before we leave
     ratatui::restore();
     app_result

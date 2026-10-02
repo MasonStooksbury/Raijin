@@ -131,11 +131,10 @@ When editing the logo.txt or any of the moon phases, make sure every line has th
 <br>
 
 ## TODO
-- Add async support so we load faster and then update the screen
 - Rework config file setup. (Right now the way I create a config file for this is pretty lazy by just looking under `~/.config` and creating a file. But this can break if people have this symlinked for dotfile stuff. I'm sure there's a more robust way to do this)
-- Test on Windows/add Windows support if it doesn't work (it should, I just haven't tested it yet)
 - Auto-refresh? Idk if anyone actually wants this, but if you had this open on a dedicated display, you could have it always have fresh data without needing to interact with this.
   If this seems interesting to you, please make an issue about it (or if it already exists, comment/like it so I know it'd be useful for you)
+- Test on Windows/add Windows support if it doesn't work (it should, I just haven't tested it yet)
 
 <br>
 
