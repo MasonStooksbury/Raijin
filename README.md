@@ -42,8 +42,7 @@
   - New Global mode (for my non-US friends! Enabled by default)
     - Layout, new Fortnight Temperature plot, and code enhancements by [Torfkopp](https://github.com/Torfkopp)
   - Legacy mode is now toggleable and off by default (this mode really only works for US users anyway)
-  - You can now edit data in the app via the new Configuration screen! (no more manual edits!)
-  - However, if you like manual edits, there is now a CLI to do so (run with INSERT COMMAND)
+  - You can now edit data in the app via the new Configuration screen! (no more manual file edits!)
   - App now supports Celsius and Fahrenheit (I don't figure this out automatically, but you can configure it now)
   - If you have the right values set for Legacy mode, you can now set it as the default screen on load (or not)
   - Moon phases now obtained with *math* from https://github.com/FunKite/solunatus

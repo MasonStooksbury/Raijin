@@ -23,65 +23,8 @@ use chrono::{NaiveDate, Datelike, DateTime, TimeZone, Timelike, Local};
 use dirs;
 use include_dir::{include_dir, Dir};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
-use clap::{Parser, Subcommand};
 
 static MOON_PHASE_ART_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/moon-phase-art");
-
-
-#[derive(Parser, Debug)]
-#[command(version, about = "A free, simple weather TUI that pulls data without the need for an API key, account, or subscription")]
-struct Args {
-    #[command(subcommand)]
-    command: Option<Commands>
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Allows you to edit a configuration setting
-    Edit {
-        /// Your current timezone (e.g. America/Chicago, America/New_York, etc)
-        #[clap(short, long)]
-        timezone: Option<String>,
-        
-        /// Latitude (e.g. 35.9295) 
-        #[clap(short, long)]
-        lat: Option<String>,
-
-        /// Longitude (e.g. -83.8906)
-        #[clap(short='o', long)]
-        long: Option<String>,
-
-        /// Your State code (e.g. TN, KY, PA)
-        #[clap(short, long)]
-        state: Option<String>,
-
-        /// Your County/Zone code as specified by NOAA (e.g. TNZ069 - More info here: https://wiki.weather-watch.com/index.php/NOAA_US_County_and_Zone_Codes )
-        #[clap(short, long)]
-        zone: Option<String>,
-
-        /// Temperature Units (e.g. F, C - Defaults to F. OpenMeteo doesn't have Kelvin :/ )
-        #[clap(short='u', long)]
-        temp_unit: Option<String>,
-
-        /// Whether or not you want the default screen when Raijin opens to be the "legacy" screen (e.g. true or false - Defaults to false)
-        #[clap(short, long)]
-        default_legacy: Option<String>,
-    }
-}
-
-
-/// Configuration Parameters
-#[derive(Debug)]
-struct ConfigParams {
-    timezone: Option<String>,
-    lat: Option<String>,
-    long: Option<String>,
-    state: Option<String>,
-    zone: Option<String>,
-    temp_unit: Option<String>,
-    default_legacy: Option<String>,
-}
-
 
 /// Conversion factor from degrees to radians.
 pub const DEG_TO_RAD: f64 = PI / 180.0;
@@ -1208,82 +1151,6 @@ fn assert_env_health() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Update config file with new values
-fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>> {
-    let env = get_env();
-    // This is all gross, but I don't really care and just want it to work
-    let original_timezone = env.get("TIMEZONE").unwrap().to_string();
-    let original_lat = env.get("LATITUDE").unwrap().to_string();
-    let original_long = env.get("LONGITUDE").unwrap().to_string();
-    let original_state = env.get("STATE").unwrap().to_string();
-    let original_zone = env.get("ZONE").unwrap().to_string();
-    let original_temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
-    let original_default_legacy = env.get("DEFAULT_LEGACY").unwrap().to_string();
-
-    let mut new_params = HashMap::new();
-
-    if !&params.timezone.is_some() {
-        new_params.insert("TIMEZONE", original_timezone);
-    } else {
-        new_params.insert("TIMEZONE", params.timezone.clone().unwrap().to_string());
-    }
-
-    if !&params.lat.is_some() {
-        new_params.insert("LAT", original_lat);
-    } else {
-        new_params.insert("LAT", params.lat.clone().unwrap().to_string());
-    }
-
-    if !&params.long.is_some() {
-        new_params.insert("LONG", original_long);
-    } else {
-        new_params.insert("LONG", params.long.clone().unwrap().to_string());
-    }
-
-    if !&params.state.is_some() {
-        new_params.insert("STATE", original_state);
-    } else {
-        new_params.insert("STATE", params.state.clone().unwrap().to_string());
-    }
-
-    if !&params.zone.is_some() {
-        new_params.insert("ZONE", original_zone);
-    } else {
-        new_params.insert("ZONE", params.zone.clone().unwrap().to_string());
-    }
-
-    if !&params.temp_unit.is_some() {
-        new_params.insert("TEMPERATURE_UNIT", original_temp_unit);
-    } else {
-        new_params.insert("TEMPERATURE_UNIT", params.temp_unit.clone().unwrap().to_string());
-    }
-
-    if !&params.default_legacy.is_some() {
-        new_params.insert("DEFAULT_LEGACY", original_default_legacy);
-    } else {
-        new_params.insert("DEFAULT_LEGACY", params.default_legacy.clone().unwrap().to_string());
-    }
-
-    let file: PathBuf = dirs::config_dir()
-        .expect("update_config - Could not find config directory")
-        .join("Raijin")
-        .join(".env");
-
-    let file_data = format!(
-        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"\n",
-        new_params["ZONE"],
-        new_params["STATE"],
-        new_params["LAT"],
-        new_params["LONG"],
-        new_params["TIMEZONE"],
-        new_params["TEMPERATURE_UNIT"],
-        new_params["DEFAULT_LEGACY"],
-    );
-    fs::write(&file, file_data)?;
-
-    Ok(())
-}
-
 /// Check to see if STATE and ZONE are set so we can grab NWS data
 fn check_legacy_compliance() -> bool {
     let env = get_env();
@@ -1310,25 +1177,6 @@ fn get_env() -> HashMap<String, String> {
 
 /// Get data from OpenMeteo and NWS if compliant
 fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
-    let args = Args::parse();
-
-    match &args.command {
-        Some(Commands::Edit { timezone, lat, long, state, zone, temp_unit, default_legacy }) => {
-            let config_params = ConfigParams {
-                timezone: timezone.clone(),
-                lat: lat.clone(),
-                long: long.clone(),
-                state: state.clone(),
-                zone: zone.clone(),
-                temp_unit: temp_unit.clone(),
-                default_legacy: default_legacy.clone(),
-            };
-
-            let _ = update_config(config_params);
-        },
-        None => {}
-    }
-
     let data = include_str!("./weather-codes.json");
     let weather_codes: serde_json::Value = serde_json::from_str(&data).expect("JSON was malformed");
 
