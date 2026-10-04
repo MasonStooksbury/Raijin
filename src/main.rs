@@ -1,24 +1,157 @@
-use dotenv;
+use std::{fs, io, fmt};
+use std::collections::HashMap;
+use std::f64::consts::PI;
+use std::default::Default;
+use std::path::{PathBuf};
+// use std::time::Instant;
+use regex::Regex;
 use serde::{Serialize, Deserialize};
+use educe::Educe;
 use urlencoding::encode;
-use std::{fs, io, env};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use ureq::Agent;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Stylize, Color, Style},
     symbols::{Marker},
     text::{Line, Text},
-    widgets::{Block, Paragraph, Borders, Wrap, Cell, Row, Table, Padding, Axis, Chart, GraphType, Dataset},
+    widgets::{Block, Clear, Paragraph, Borders, Wrap, Cell, Row, Table, Padding, Axis, Chart, GraphType, Dataset},
     prelude::{Alignment},
     DefaultTerminal, Frame,
 };
-use chrono::{NaiveDate, Datelike};
-use std::path::{PathBuf};
+use Constraint::{Percentage, Ratio};
+use ratiform::{Form, FormState, builder::FormBuilder, validators};
+use chrono::{NaiveDate, Datelike, DateTime, TimeZone, Timelike, Local};
+use dotenvy::{EnvLoader, EnvSequence, EnvMap};
 use dirs;
-use ureq::Agent;
 use include_dir::{include_dir, Dir};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use clap::{Parser, Subcommand};
 
 static MOON_PHASE_ART_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/moon-phase-art");
+
+
+#[derive(Parser, Debug)]
+#[command(version, about = "A free, simple weather TUI that pulls data without the need for an API key, account, or subscription")]
+struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Allows you to edit a configuration setting
+    Edit {
+        /// Your current timezone (e.g. America/Chicago, America/New_York, etc)
+        #[clap(short, long)]
+        timezone: Option<String>,
+        
+        /// Latitude (e.g. 35.9295) 
+        #[clap(short, long)]
+        lat: Option<String>,
+
+        /// Longitude (e.g. -83.8906)
+        #[clap(short='o', long)]
+        long: Option<String>,
+
+        /// Your State code (e.g. TN, KY, PA)
+        #[clap(short, long)]
+        state: Option<String>,
+
+        /// Your County/Zone code as specified by NOAA (e.g. TNZ069 - More info here: https://wiki.weather-watch.com/index.php/NOAA_US_County_and_Zone_Codes )
+        #[clap(short, long)]
+        zone: Option<String>,
+
+        /// Temperature Units (e.g. F, C - Defaults to F. OpenMeteo doesn't have Kelvin :/ )
+        #[clap(short='u', long)]
+        temp_unit: Option<String>,
+
+        /// Whether or not you want the default screen when Raijin opens to be the "legacy" screen (e.g. true or false - Defaults to false)
+        #[clap(short, long)]
+        default_legacy: Option<String>,
+    }
+}
+
+
+/// Configuration Parameters
+#[derive(Debug)]
+struct ConfigParams {
+    timezone: Option<String>,
+    lat: Option<String>,
+    long: Option<String>,
+    state: Option<String>,
+    zone: Option<String>,
+    temp_unit: Option<String>,
+    default_legacy: Option<String>,
+}
+
+
+/// Conversion factor from degrees to radians.
+pub const DEG_TO_RAD: f64 = PI / 180.0;
+
+/// Conversion factor from radians to degrees.
+pub const RAD_TO_DEG: f64 = 180.0 / PI;
+
+/// An angle measured in degrees.
+///
+/// Provides type safety to prevent mixing degrees with radians in calculations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Degrees(f64);
+
+impl Degrees {
+    /// Create an angle from a value in degrees.
+    pub fn new(value: f64) -> Self {
+        Self(value)
+    }
+
+    /// Return the underlying numeric value as a bare `f64`.
+    pub fn value(&self) -> f64 {
+        self.0
+    }
+
+    /// Normalize to 0-360 range
+    pub fn normalized(self) -> Self {
+        let mut result = self.0 % 360.0;
+        if result < 0.0 {
+            result += 360.0;
+        }
+        Self(result)
+    }
+
+    /// Sine of the angle.
+    pub fn sin(self) -> f64 {
+        self.0.to_radians().sin()
+    }
+
+    /// Cosine of the angle.
+    pub fn cos(self) -> f64 {
+        self.0.to_radians().cos()
+    }
+
+    /// Tangent of the angle.
+    pub fn tan(self) -> f64 {
+        self.0.to_radians().tan()
+    }
+}
+
+impl fmt::Display for Degrees {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}°", self.0)
+    }
+}
+
+impl From<f64> for Degrees {
+    fn from(value: f64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Degrees> for f64 {
+    fn from(deg: Degrees) -> f64 {
+        deg.0
+    }
+}
+
+
 
 /// Single day of weather forecast from NWS
 #[derive(Serialize, Deserialize, Debug)]
@@ -106,26 +239,102 @@ struct OpenMeteoForecast {
     hourly: Vec<OpenMeteoHourly>
 }
 
-/// Moon phase data for a given date
-#[derive(Serialize, Deserialize, Debug)]
-struct MoonPhase {
-    date: String,
-    phase: String,
-    illumination: String
+
+fn normalize_degrees(angle: f64) -> f64 {
+    Degrees::new(angle).normalized().value()
 }
 
-/// Raw phase data from ViewBits
-#[derive(Serialize, Deserialize, Debug)]
-struct RawMoonPhaseData {
-    phases: Vec<MoonPhase>
+fn julian_day<T: TimeZone>(dt: DateTime<T>) -> f64 {
+    // Convert to UTC for Julian Day calculation
+    let utc_dt = dt.with_timezone(&chrono::Utc);
+
+    let year = utc_dt.year() as f64;
+    let month = utc_dt.month() as f64;
+    let day = utc_dt.day() as f64
+        + utc_dt.hour() as f64 / 24.0
+        + utc_dt.minute() as f64 / 1440.0
+        + utc_dt.second() as f64 / 86400.0;
+
+    let mut y = year;
+    let mut m = month;
+
+    if month <= 2.0 {
+        y -= 1.0;
+        m += 12.0;
+    }
+
+    let a = (y / 100.0).floor();
+    let b = 2.0 - a + (a / 4.0).floor();
+
+    (365.25 * (y + 4716.0)).floor() + (30.6001 * (m + 1.0)).floor() + day + b - 1524.5
+}
+
+/// Calculate Julian Century from a Julian Day number.
+/// Julian Century is the number of centuries since the J2000.0 epoch (JD 2451545.0),
+/// which corresponds to January 1, 2000, 12:00 TT.
+fn julian_century(jd: f64) -> f64 {
+    (jd - 2451545.0) / 36525.0
 }
 
 
+fn get_sun_and_moon_stuff(t: f64) -> (f64, f64, f64) {
+    // Calculate mean elongation of the Moon
+    let d = 297.8501921 + t * (445267.1114034 + t * (-0.0018819 + t * (1.0 / 545868.0 + t * (-1.0 / 113065000.0))));
+    normalize_degrees(d);
 
+    // Calculate Sun's mean anomaly
+    let m = 357.5291092 + t * (35999.0502909 + t * (-0.0001536 + t * (1.0 / 24490000.0)));
+    normalize_degrees(m);
+
+    // Calculate Moon's mean anomaly
+    let m_prime = 134.9633964 + t * (477198.8675055 + t * (0.0087414 + t * (1.0 / 69699.0 + t * (-1.0 / 14712000.0))));
+    normalize_degrees(m_prime);
+
+    return (d * DEG_TO_RAD, m * DEG_TO_RAD, m_prime * DEG_TO_RAD);
+}
+
+/// Calculate phase angle
+fn get_phase_angle() -> f64 {
+    let jd = julian_day(Local::now());
+    let t = julian_century(jd);
+
+    let (d, m, m_prime) = get_sun_and_moon_stuff(t);
+
+    // Illumination angle (0° = full moon, 180° = new moon)
+    let illum_angle = 180.0 - d * RAD_TO_DEG - 6.289 * m_prime.sin() + 2.100 * m.sin()
+        - 1.274 * (2.0 * d - m_prime).sin()
+        - 0.658 * (2.0 * d).sin()
+        - 0.214 * (2.0 * m_prime).sin()
+        - 0.110 * d.sin();
+
+
+    // Convert to orbital phase angle (0° = new moon, 180° = full moon)
+    return normalize_degrees(180.0 - illum_angle);
+}
+
+/// Return the moon phase name given the phase angle
+fn phase_name(phase_angle: f64) -> &'static str {
+    match phase_angle {
+        a if a < 11.25 => "New Moon",
+        a if a < 78.75 => "Waxing Crescent",
+        a if a < 101.25 => "First Quarter",
+        a if a < 168.75 => "Waxing Gibbous",
+        a if a < 191.25 => "Full Moon",
+        a if a < 258.75 => "Waning Gibbous",
+        a if a < 281.25 => "Last Quarter",
+        a if a < 348.75 => "Waning Crescent",
+        _ => "New Moon",
+    }
+}
+
+/// Calculate and return the name of the current moon phase
+fn get_moon_phase() -> &'static str {
+    return phase_name(get_phase_angle());
+}
 
 
 /// Create the "Right Now" weather table
-fn create_right_now_table(forecast: &OpenMeteoForecast) -> Table {
+fn create_right_now_table(forecast: &OpenMeteoForecast) -> Table<'_> {
     let widths = [
         Constraint::Length(15),
         Constraint::Fill(1),
@@ -163,15 +372,95 @@ fn create_right_now_table(forecast: &OpenMeteoForecast) -> Table {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .padding(Padding::uniform(1))
+                    .padding(Padding::new(1,1,2,1))
+                    // .padding(Padding::uniform(1))
                     .title(Line::from(" Right Now ").light_blue().centered().bold())
             );
 }
 
 
+/// Renders the scatterplot to show the temperature over the next two weeks
+fn render_fortnight_scatterplot(
+    frame: &mut Frame,
+    area: Rect,
+    hourly: &Vec<OpenMeteoHourly>,
+    daily: &Vec<OpenMeteoPeriod>,
+    temp_unit: String,
+) {
+    const DATA_LENGTH: usize = 336;
+
+    let mut fortnight_hourly: [(f64, f64); DATA_LENGTH] = [(0., 0.); DATA_LENGTH];
+    let mut count: usize = 0;
+    for i in hourly {
+        let mut temp_clone = i.temperature.clone();
+        temp_clone.pop();
+        let temp_as_float = temp_clone.parse::<f64>().unwrap();
+        // Scale the x-coordinate to fit within 0..336 for 14 days of hourly data
+        let x_position = count as f64;
+        fortnight_hourly[count] = (x_position, temp_as_float);
+        count += 1;
+    }
+
+    let days: Vec<String> = daily
+        .iter()
+        .map(|l| {
+            let parts: Vec<&str> = l.date.split('-').collect();
+            if parts.len() == 3 {
+                format!("{}-{}", parts[1], parts[2]) // MM-DD
+            } else {
+                l.date.clone() // fallback in case the format is unexpected
+            }
+        })
+        .collect();
+
+    let x_labels: Vec<Line> = (0..14) // 14 days in total
+        .map(|i| {
+            let day = &days[i];
+            Line::from(day.as_str())
+        })
+        .collect();
+
+    let temps: Vec<f64> = fortnight_hourly.iter().map(|(_, temp)| *temp).collect();
+    let min_temp = temps.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_temp = temps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    let y_min = (min_temp - 5.0).floor();
+    let y_max = (max_temp + 5.0).ceil();
+
+    let step = (y_max - y_min) / 4.0;
+    let y_labels = (0..5)
+        .map(|i| format!("{:.0}", y_min + i as f64 * step))
+        .collect::<Vec<_>>();
+
+    let dataset = Dataset::default()
+        .marker(Marker::Dot)
+        .graph_type(GraphType::Scatter)
+        .style(Style::new().yellow())
+        .data(&fortnight_hourly);
+
+    let chart = Chart::new(vec![dataset])
+        .block(Block::bordered().title(Line::from(" Fortnight Temps ").cyan().centered().bold()))
+        .y_axis(
+            Axis::default()
+                .title(format!("Temp (\u{00B0}{})", temp_unit))
+                .bounds([y_min, y_max])
+                .style(Style::default().fg(Color::Gray))
+                .labels(y_labels),
+        )
+        .x_axis(
+            Axis::default()
+                .title("Days")
+                .bounds([0., DATA_LENGTH as f64])
+                .style(Style::default().fg(Color::Gray))
+                .labels(x_labels),
+        )
+        .hidden_legend_constraints((Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)));
+
+    frame.render_widget(chart, area);
+}
 
 /// Renders the scatterplot to show the temperature for the rest of the current day
-fn render_temperature_scatterplot(frame: &mut Frame, area: Rect, hourly: &Vec<OpenMeteoHourly>) {
+fn render_temperature_scatterplot(frame: &mut Frame, area: Rect, hourly: &Vec<OpenMeteoHourly>, temp_unit: String) {
     let mut today_hourly: [(f64, f64); 24] = [(0., 0.); 24];
     let mut count: usize = 0;
     for i in hourly {
@@ -190,21 +479,33 @@ fn render_temperature_scatterplot(frame: &mut Frame, area: Rect, hourly: &Vec<Op
         }
     }
 
+    
+    let temps: Vec<f64> = today_hourly.iter().map(|(_, temp)| *temp).collect();
+    let min_temp = temps.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_temp = temps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    let y_min = (min_temp - 5.0).floor();
+    let y_max = (max_temp + 5.0).ceil();
+
+    let step = (y_max - y_min) / 4.0;
+    let y_labels = (0..5)
+        .map(|i| format!("{:.0}", y_min + i as f64 * step))
+        .collect::<Vec<_>>();
 
     let dataset = Dataset::default()
             .marker(Marker::Dot)
             .graph_type(GraphType::Scatter)
             .style(Style::new().yellow())
             .data(&today_hourly);
-
-    let chart = Chart::new(vec!(dataset))
+    
+    let chart = Chart::new(vec![dataset])
         .block(Block::bordered().title(Line::from(" Today's Temps ").cyan().centered().bold()))
         .y_axis(
             Axis::default()
-                .title("Temp (\u{00B0}F)")
-                .bounds([0., 120.])
+                .title(format!("Temp (\u{00B0}{})", temp_unit))
+                .bounds([y_min, y_max])
                 .style(Style::default().fg(Color::Gray))
-                .labels(["0", "30", "60", "90", "120"]),
+                .labels(y_labels),
         )
         .x_axis(
             Axis::default()
@@ -221,7 +522,7 @@ fn render_temperature_scatterplot(frame: &mut Frame, area: Rect, hourly: &Vec<Op
 
 
 /// Creates the cards for the 4-cast section
-fn create_weather_card(period: &OpenMeteoPeriod) -> Table {
+fn create_weather_card(period: &OpenMeteoPeriod) -> Table<'_> {
         let widths = [
             Constraint::Length(15),
             Constraint::Fill(1)
@@ -282,24 +583,146 @@ fn get_day_from_date(date: &String) -> String {
 }
 
 
+#[derive(Debug, Hash, Eq, PartialEq)]
+enum Field {
+    Zone,
+    State,
+    Latitude,
+    Longitude,
+    Timezone,
+    TempUnit,
+    DefaultLegacy,
+}
+
+/// Returns a default FormState so App is happy
+fn get_default_form() -> FormState<Field> {
+    return FormBuilder::new()
+        .build()
+        .expect("get_default_form - FormBuilder failed");
+}
 
 
 /// Application state data
-#[derive(Serialize, Debug, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Educe)]
+#[educe(Default)]
 struct App {
     open_meteo_forecast: OpenMeteoForecast,
-    todays_weather_description: String,
+    todays_weather_description: Option<String>,
     moon_phase_art: String,
-    exit: bool
+    exit: bool,
+    legacy_compliant: bool,
+    legacy_mode_active: bool,
+    temp_unit: String,
+    is_legacy_default: bool,
+    show_legacy_popup: bool,
+    show_configuration: bool,
+    #[educe(Default(expression = get_default_form()))]
+    configuration_form: FormState<Field>,
 }
+
+impl fmt::Debug for App {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("App").finish()
+    }
+}
+
+
+/// Builds and returns the form for the configuration screen
+fn get_configuration_form() -> FormState<Field> {
+    let env = get_env();
+    return FormBuilder::new()
+        .single_line(Field::Zone, "Weather Zone (US Only)")
+            .value(env.get("ZONE").unwrap())
+            .optional()
+            .normalizer(|s| s.to_uppercase())
+            .validator(validators::max_length(
+                6,
+                "Weather Zone must only be 6 characters (e.g. TNZ069)".to_owned()
+            ))
+            .validator(|value: &str| {
+                let regex = Regex::new(r"^[A-Z]{3}\d{3}$").unwrap();
+                (regex.is_match(value))
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "Weather Zone must be three letters followed by three numbers".to_owned() 
+                    })
+            })
+        .single_line(Field::State, "State Code (US Only)")
+            .value(env.get("STATE").unwrap())
+            .optional()
+            .normalizer(|s| s.to_uppercase())
+            .validator(validators::max_length(
+                2,
+                "State Code must only be two characters (e.g. TN, KY, PA, etc)".to_owned()
+            ))
+            .validator(|value: &str| {
+                let regex = Regex::new(r"^[A-Z]{2}$").unwrap();
+                (regex.is_match(value))
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "State Code must be two letters".to_owned() 
+                    })
+            })
+        .single_line(Field::Latitude, "Latitude")
+            .value(env.get("LATITUDE").unwrap())
+            .required("Latitude is required".to_owned())
+            .validator(validators::parsable::<f32>(
+                "Latitude must be a number".to_owned()
+            ))
+        .single_line(Field::Longitude, "Longitude")
+            .value(env.get("LONGITUDE").unwrap())
+            .required("Longitude is required".to_owned())
+            .validator(validators::parsable::<f32>(
+                "Longitude must be a number".to_owned()
+            ))
+        .single_line(Field::Timezone, "Timezone")
+            .value(env.get("TIMEZONE").unwrap())
+            .required("Timezone is required".to_owned())
+        .single_line(Field::TempUnit, "Temperature Units")
+            .value(env.get("TEMPERATURE_UNIT").unwrap())
+            .required("Temperature Units is required".to_owned())
+            .normalizer(|s| s.to_uppercase())
+            .validator(validators::max_length(
+                1,
+                "Temperature Units must only be one character long (e.g. C or F)".to_owned(),
+            ))
+            .validator(|value: &str| {
+                (value == "F" || value == "C")
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "Temperature Units must either be 'C' or 'F'".to_owned()
+                    })
+            })
+        .checkbox(Field::DefaultLegacy, "Default to Legacy Screen")
+            .checked(env.get("DEFAULT_LEGACY").unwrap() == "true")
+        .build()
+        .expect("App - FormBuilder failed");
+}
+
 
 /// Main Ratatui app for Raijin
 impl App {
     /// Runs the application's main loop until the user quits
-    fn run(&mut self, terminal: &mut DefaultTerminal, forecast: OpenMeteoForecast, today: String, moon_phase_art: String) -> io::Result<()> {
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        // Render a loading screen before getting data. That way the app loads instantly and feels a bit snappier
+        terminal.draw(|frame| self.render_loading_screen(frame))?;
+
+        let (today, forecast, moon_phase_art) = get_data();
+
+        let env = get_env();
+        self.temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
+        self.is_legacy_default = env.get("DEFAULT_LEGACY").unwrap() == "true";
         self.open_meteo_forecast = forecast;
-        self.todays_weather_description = today;
+        self.show_configuration = false;
+
+        self.legacy_mode_active = self.is_legacy_default;
+        self.legacy_compliant = today.is_some();
+        if self.legacy_compliant {
+            self.todays_weather_description = today;
+        }
+
+        self.configuration_form = get_configuration_form();
+
         self.moon_phase_art = moon_phase_art;
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
@@ -308,9 +731,21 @@ impl App {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
-        use Constraint::{Percentage, Ratio};
+    /// Renders a "loading screen" so that the app instantly opens. Makes things feel a bit snappier
+    fn render_loading_screen(&self, frame: &mut Frame) {
+        let area = frame.area().centered(
+            Constraint::Percentage(25),
+            Constraint::Length(9), // top and bottom border + content
+        );
+        let title = Line::from("LOADING").light_yellow().centered().bold();
+        let content = "\nGrabbing weather data now...";
+        let popup = Paragraph::new(content).block(Block::bordered().title(title).padding(Padding::uniform(1)));
+        frame.render_widget(Clear, area);
+        frame.render_widget(popup, area);
+    }
 
+    /// Renders the "legacy" screen which includes the "Right Now Details" from the NWS data
+    fn render_legacy_screen(&self, frame: &mut Frame) {
         let vertical = Layout::vertical([Percentage(50), Percentage(50)]);
         let [today_area, forecast_area] = vertical.areas(frame.area());
         
@@ -322,22 +757,28 @@ impl App {
 
         let current_weather = Layout::vertical([Ratio(1,2), Ratio(1,2)]);
         let [quick_stats, description] = current_weather.areas(current);
- 
+
+        // Setup bottom area for 4-cast and command bar
+        let forecast_and_commands = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
+        let [forecast_blocks, command_bar] = forecast_and_commands.areas(forecast_area);
         let outer_block = Block::bordered().title(Line::from(" 4-cast ").light_magenta().centered().bold()).padding(Padding::new(0,0,1,0));
         let inner_block = Block::bordered();
-        let inner_area = outer_block.inner(forecast_area);
+        let inner_area = outer_block.inner(forecast_blocks);
 
         let upcoming_weather = Layout::horizontal([Ratio(1,4), Ratio(1,4), Ratio(1,4), Ratio(1,4)]);
         let [slot1, slot2, slot3, slot4] = upcoming_weather.areas(inner_area);
+
+        // Render command bar
+        let commands = Line::from("R - refresh   |   C - configure   |   L - legacy mode   |   Q - quit").light_yellow().centered();
+        frame.render_widget(commands, command_bar);
         
-        frame.render_widget(outer_block, forecast_area);
+        frame.render_widget(outer_block, forecast_blocks);
         frame.render_widget(inner_block, inner_area);
 
         frame.render_widget(Block::bordered(), mid_top);
         frame.render_widget(Block::new(), mid_bottom);
 
-        // Render the current moon phase for tonight (they store the current moon phase in the
-        // third position):
+        // Render the current moon phase for tonight
         frame.render_widget(
             Paragraph::new(self.moon_phase_art.clone()).alignment(Alignment::Center)
                 .block(
@@ -359,8 +800,7 @@ impl App {
 
         // Render the day's full description into the top-left-bottom section
         frame.render_widget(
-            Paragraph::new(self.todays_weather_description.clone()).wrap(Wrap { trim: true }).alignment(Alignment::Center)
-                .block(
+            Paragraph::new(self.todays_weather_description.clone().unwrap()).wrap(Wrap { trim: true }).alignment(Alignment::Center) .block(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(Line::from(" Right Now Details ").light_green().centered().bold())
@@ -370,7 +810,7 @@ impl App {
 
         // Render forecast summary details for right now
         frame.render_widget(create_right_now_table(&self.open_meteo_forecast), quick_stats);
-        render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly);
+        render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly, self.temp_unit.clone());
         
         // Populate the 4-cast
         for i in 1..5 {
@@ -388,28 +828,262 @@ impl App {
         }
     }
 
+    /// Renders the "modern" screen which removes the NWS data completely and substitutes it with a fortnight's worth of temperature data
+    fn render_modern_screen(&self, frame: &mut Frame) {
+        let vertical = Layout::vertical([Percentage(70), Percentage(30)]);
+        let [today_area, forecast_area] = vertical.areas(frame.area());
+        
+        let horizontal = Layout::horizontal([Ratio(2,3), Ratio(1,3)]);
+        let [top_left, top_right] = horizontal.areas(today_area);
+
+        let top = Layout::vertical([Percentage(40), Percentage(60)]);
+        let [today_info, fortnight_graph] = top.areas(top_left);
+
+        let top2 = Layout::vertical([Ratio(3,4), Ratio(1,4)]);
+        let [today, logo_area] = top2.areas(top_right);
+
+        let topest = Layout::horizontal([Ratio(1,2), Ratio(1,2)]);
+        let [quick_stats, mid_top] = topest.areas(today_info);
+         
+        // Setup bottom area for 4-cast and command bar
+        let forecast_and_commands = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]);
+        let [forecast_blocks, command_bar] = forecast_and_commands.areas(forecast_area);
+        let outer_block = Block::bordered().title(Line::from(" 4-cast ").light_magenta().centered().bold()).padding(Padding::new(0,0,1,0));
+        let inner_block = Block::bordered();
+        let inner_area = outer_block.inner(forecast_blocks);
+        
+        let upcoming_weather = Layout::horizontal([Ratio(1,4), Ratio(1,4), Ratio(1,4), Ratio(1,4)]);
+        let [slot1, slot2, slot3, slot4] = upcoming_weather.areas(inner_area);
+
+        // Render command bar
+        let commands = Line::from("R - refresh   |   C - configure   |   L - legacy mode   |   Q - quit").light_yellow().centered();
+        frame.render_widget(commands, command_bar);
+        
+        frame.render_widget(outer_block, forecast_blocks);
+        frame.render_widget(inner_block, inner_area);
+
+        frame.render_widget(Block::bordered(), mid_top);
+        frame.render_widget(Block::new(), fortnight_graph);
+
+        // Render the current moon phase for tonight
+        frame.render_widget(
+            Paragraph::new(self.moon_phase_art.clone()).alignment(Alignment::Center)
+                .block(
+                    Block::new()
+                        .title(Line::from(" Tonight's Moon Phase ").light_yellow().centered().bold())
+                )
+                , mid_top);
+
+        // Render the logo on the right-hand side
+        let logo = include_str!("./logo.txt");
+        frame.render_widget(
+            Paragraph::new(logo)
+                .alignment(Alignment::Center)
+                .style(Style::new().red()),
+            logo_area);
+
+        // Render the fortnight weather scatterplot
+        render_fortnight_scatterplot(
+            frame,
+            fortnight_graph,
+            &self.open_meteo_forecast.hourly,
+            &self.open_meteo_forecast.periods,
+            self.temp_unit.clone(),
+        );
+
+
+        // Render forecast summary details for right now
+        frame.render_widget(create_right_now_table(&self.open_meteo_forecast), quick_stats);
+
+        // Render the scatterplot for today's temperature
+        render_temperature_scatterplot(frame, today, &self.open_meteo_forecast.hourly, self.temp_unit.clone());
+        
+        // Populate the 4-cast
+        for i in 1..5 {
+            let mut render_area: Rect = slot1;
+            if i == 2 {
+                render_area = slot2;
+            } else if i == 3 {
+                render_area = slot3;
+            } else if i == 4 {
+                render_area = slot4;
+            }
+
+            frame.render_widget(
+                create_weather_card(&self.open_meteo_forecast.periods[i]),
+                render_area,
+            );
+        }
+
+        // Show the legacy popup informing the user that they need to configure ZONE and STATE in order to use legacy mode
+        if self.show_legacy_popup {
+            let area = frame.area().centered(
+                Constraint::Percentage(25),
+                Constraint::Length(9), // top and bottom border + content
+            );
+            let title = Line::from("SETUP REQUIRED").light_yellow().centered().bold();
+            let content = "\nTo use Legacy Mode, please configure your\nweather ZONE and STATE code.\n\n\nPress Esc to close\nPress C to configure";
+            let popup = Paragraph::new(content).block(Block::bordered().title(title));
+            frame.render_widget(Clear, area);
+            frame.render_widget(popup, area);
+        }
+    }
+
+    /// Renders the configuration screen where users can change settings rather than editing a file or using the CLI
+    fn render_configuration_screen(&mut self, frame: &mut Frame) {
+        // Show the configuration page
+        if self.show_configuration {
+            // Some of these measurements look dumb, but I'm trying to get it to look decent on most screens
+            //     and frankly, I don't know a better way to do it; so this will work for now :)
+            let vertical = Layout::vertical([Ratio(1,2), Ratio(1,2)]);
+            let [top, bottom] = vertical.areas(frame.area());
+
+            let form_area = top.centered(
+                Constraint::Percentage(70),
+                Constraint::Percentage(60),
+            );
+
+            frame.render_stateful_widget(Form::default(), form_area, &mut self.configuration_form);
+
+            let legend_area = bottom.centered(
+                Constraint::Percentage(70),
+                Constraint::Percentage(60),
+            );
+
+            let block = Block::default()
+                .title(" LEGEND ")
+                .borders(Borders::ALL)
+                .padding(Padding::uniform(1));
+            let text = vec![
+                Line::from(vec!["Next field:       ".bold(), "TAB".into()]),
+                Line::from(vec!["Previous field:   ".bold(), "SHIFT + TAB".into()]),
+                Line::from(vec!["Save changes:     ".bold(), "ENTER".into()]),
+                Line::from(vec!["Cancel:           ".bold(), "ESC".into()]),
+            ];
+
+            frame.render_widget(Paragraph::new(text).block(block), legend_area);
+
+            if let Some(position) = self.configuration_form.cursor_position() {
+                frame.set_cursor_position(position);
+            }
+        }
+    }
+
+    fn draw(&mut self, frame: &mut Frame) {
+        if self.show_configuration {
+            self.render_configuration_screen(frame);
+            return;
+        }
+        if self.legacy_mode_active && self.legacy_compliant {
+            self.render_legacy_screen(frame);
+            return;
+        }
+        self.render_modern_screen(frame);
+    }
+
     /// Updates the application's state based on user input
     fn handle_events(&mut self) -> io::Result<()> {
         match event::read()? {
             // it's important to check that the event is a key press event as
             // crossterm also emits key release and repeat events on Windows.
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_event(key_event)
+                if !self.show_configuration {
+                    self.handle_key_event(key_event)
+                } else {
+                    self.handle_configuration_key_event(key_event)
+                }
             }
             _ => {}
         };
         Ok(())
     }
 
+    fn handle_configuration_key_event(&mut self, key_event: KeyEvent) {
+        self.configuration_form.handle_input(key_event);
+
+        match self.configuration_form.result() {
+            ratiform::FormResult::Submitted => self.form_submitted(),
+            ratiform::FormResult::Cancelled => self.form_cancelled(),
+            ratiform::FormResult::Working => {}
+        }
+    }
+
+    fn form_submitted(&mut self) {
+        let file: PathBuf = dirs::config_dir()
+            .expect("form_submitted - Could not find config directory")
+            .join("Raijin")
+            .join(".env");
+
+        let file_data = format!(
+            "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"\n",
+            self.configuration_form.value(&Field::Zone).unwrap(),
+            self.configuration_form.value(&Field::State).unwrap(),
+            self.configuration_form.value(&Field::Latitude).unwrap(),
+            self.configuration_form.value(&Field::Longitude).unwrap(),
+            self.configuration_form.value(&Field::Timezone).unwrap(),
+            self.configuration_form.value(&Field::TempUnit).unwrap(),
+            self.configuration_form.value(&Field::DefaultLegacy).unwrap(),
+        );
+        let _ = fs::write(&file, file_data);
+        self.configuration_form.commit();
+
+        self.refresh_app();
+        self.show_configuration = false;
+    }
+
+    fn form_cancelled(&mut self) {
+        self.configuration_form.reset();
+        self.show_configuration = false;
+    }
+
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
             KeyCode::Char('q') => self.exit(),
+            KeyCode::Char('l') => self.toggle_legacy_mode(),
+            KeyCode::Char('c') => self.configure_app(),
+            KeyCode::Char('r') => self.refresh_app(),
+            KeyCode::Esc => {self.show_legacy_popup = false},
             _ => {}
         }
     }
 
     fn exit(&mut self) {
         self.exit = true;
+    }
+
+    /// Toggles between the legacy and modern screens if compliant
+    fn toggle_legacy_mode(&mut self) {
+        if !self.legacy_compliant {
+            self.show_legacy_popup = true;
+            return;
+        }
+        self.legacy_mode_active = !self.legacy_mode_active;
+    }
+
+    /// Brings up the configuration screen
+    fn configure_app(&mut self) {
+        self.show_configuration = true;
+    }
+
+    /// Refreshes the environment and re-grabs all the data
+    /// TODO: We really need to cache this or something
+    fn refresh_app(&mut self) {
+        let env = get_env();
+        let (today, open_meteo_forecast, moon_phase_art) = get_data();
+
+        self.is_legacy_default = env.get("DEFAULT_LEGACY").unwrap() == "true";
+        self.legacy_mode_active = self.is_legacy_default;
+        self.legacy_compliant = today.is_some();
+        if self.legacy_compliant {
+            self.todays_weather_description = today;
+        }
+
+        self.configuration_form = get_configuration_form();
+        self.temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
+        self.show_legacy_popup = false;
+
+        self.open_meteo_forecast = open_meteo_forecast;
+        self.moon_phase_art = moon_phase_art;
     }
 }
 
@@ -418,12 +1092,19 @@ impl App {
 /// Get the forecast for the next 7 days as well as today's weather conditions
 /// Using this API: <https://api.open-meteo.com/v1/forecast>
 fn get_open_meteo_weather(agent: &Agent, weather_codes: serde_json::Value) -> Result<OpenMeteoForecast, ureq::Error> {
-    let latitude = env::var("LATITUDE").unwrap();
-    let longitude = env::var("LONGITUDE").unwrap();
-    let mut timezone = env::var("TIMEZONE").unwrap().to_string();
+    let env = get_env();
+    let latitude = env.get("LATITUDE").unwrap();
+    let longitude = env.get("LONGITUDE").unwrap();
+    let mut temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
+    if temp_unit == "F" {
+        temp_unit = "fahrenheit".to_string();
+    } else {
+        temp_unit = "celsius".to_string();
+    }
+    let mut timezone = env.get("TIMEZONE").unwrap().to_string();
     timezone = encode(&timezone).to_string();
-    
-    let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,weather_code,precipitation_probability_mean&hourly=temperature_2m,weather_code&current=temperature_2m,apparent_temperature,weather_code&timezone={}&forecast_days=14&wind_speed_unit=mph&temperature_unit=fahrenheit&precipitation_unit=inch", latitude.to_string(), longitude.to_string(), timezone);
+
+    let url = format!("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,weather_code,precipitation_probability_mean&hourly=temperature_2m,weather_code&current=temperature_2m,apparent_temperature,weather_code&timezone={}&forecast_days=14&temperature_unit={}", latitude.to_string(), longitude.to_string(), timezone, temp_unit);
 
     let json = agent.get(url)
         .call()?
@@ -463,9 +1144,11 @@ fn get_open_meteo_weather(agent: &Agent, weather_codes: serde_json::Value) -> Re
 
 /// Get the morning/night weather for the next 7 days (including today)
 /// Using this API: <https://api.weather.gov/>
+/// Used exclusively for the Right Now Details in Legacy mode
 fn get_nws_weather_periods(agent: &Agent) -> Result<Vec<NwsPeriod>, ureq::Error> {
-    let state = env::var("STATE").unwrap();
-    let zone = env::var("ZONE").unwrap();
+    let env = get_env();
+    let state = env.get("STATE").unwrap();
+    let zone = env.get("ZONE").unwrap();
     let url = format!("https://api.weather.gov/zones/{}/{}/forecast", state.to_string(), zone.to_string());
     
     let response = agent.get(url)
@@ -477,27 +1160,10 @@ fn get_nws_weather_periods(agent: &Agent) -> Result<Vec<NwsPeriod>, ureq::Error>
 }
 
 
-
-/// Get the phases of the moon for today and the next 3 days
-/// Using this API: <https://api.viewbits.com/v1/moonphase>
-fn get_moon_phases(agent: &Agent, date: String) -> Result<Vec<MoonPhase>, ureq::Error> {
-    let url = format!("https://api.viewbits.com/v1/moonphase?startdate={}", date);
-    let moon_phases = agent.get(url)
-        .call()?
-        .body_mut()
-        .read_json::<Vec<MoonPhase>>()?;
-
-    return Ok(moon_phases);
-}
-
-
-
-
-
-fn main() -> io::Result<()> {
-    let folder: PathBuf = dirs::home_dir()
-        .expect("Could not find home directory")
-        .join(".config")
+/// Create a config directory if it doesn't exist and prepopulate the .env file
+fn configure() -> Result<(), Box<dyn std::error::Error>> {
+    let folder: PathBuf = dirs::config_dir()
+        .expect("configure - Could not find config directory")
         .join("Raijin");
 
     let file = folder.join(".env");
@@ -507,10 +1173,155 @@ fn main() -> io::Result<()> {
     }
 
     if !file.exists() {
-        fs::write(&file, "ZONE=\"TNZ069\"\nSTATE=\"TN\"\nLATITUDE=\"35.9626444\"\nLONGITUDE=\"-83.9167239\"\nTIMEZONE=\"America/New_York\"\n")?;
+        fs::write(&file, "ZONE=\"\"\nSTATE=\"\"\nLATITUDE=\"35.9626444\"\nLONGITUDE=\"-83.9167239\"\nTIMEZONE=\"America/New_York\"\nTEMPERATURE_UNIT=\"F\"\nDEFAULT_LEGACY=\"false\"\n")?;
     }
 
-    let _ = dotenv::from_path(&file).expect("Could not find .env file");
+    return Ok(());
+}
+
+/// Checks that all the necessary fields are set in the env so the user doesn't have to think about it
+fn assert_env_health() -> Result<(), Box<dyn std::error::Error>> {
+    let env = get_env();
+
+    let state = env.get("STATE").unwrap_or(&"".to_string()).to_string();
+    let zone = env.get("ZONE").unwrap_or(&"".to_string()).to_string();
+    let timezone = env.get("TIMEZONE").unwrap_or(&"America/New_York".to_string()).to_string();
+    let lat = env.get("LATITUDE").unwrap_or(&"35.9626444".to_string()).to_string();
+    let long = env.get("LONGITUDE").unwrap_or(&"-83.9167239".to_string()).to_string();
+    let temp_unit = env.get("TEMPERATURE_UNIT").unwrap_or(&"F".to_string()).to_string();
+    let default_legacy = env.get("DEFAULT_LEGACY").unwrap_or(&"false".to_string()).to_string();
+
+    let file: PathBuf = dirs::config_dir()
+        .expect("assert_env_health - Could not find config directory")
+        .join("Raijin")
+        .join(".env");
+
+    let file_data = format!(
+        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"\n",
+        zone,
+        state,
+        lat,
+        long,
+        timezone,
+        temp_unit,
+        default_legacy,
+    );
+    fs::write(&file, file_data)?;
+    Ok(())
+}
+
+/// Update config file with new values
+fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>> {
+    let env = get_env();
+    // This is all gross, but I don't really care and just want it to work
+    let original_timezone = env.get("TIMEZONE").unwrap().to_string();
+    let original_lat = env.get("LATITUDE").unwrap().to_string();
+    let original_long = env.get("LONGITUDE").unwrap().to_string();
+    let original_state = env.get("STATE").unwrap().to_string();
+    let original_zone = env.get("ZONE").unwrap().to_string();
+    let original_temp_unit = env.get("TEMPERATURE_UNIT").unwrap().to_string();
+    let original_default_legacy = env.get("DEFAULT_LEGACY").unwrap().to_string();
+
+    let mut new_params = HashMap::new();
+
+    if !&params.timezone.is_some() {
+        new_params.insert("TIMEZONE", original_timezone);
+    } else {
+        new_params.insert("TIMEZONE", params.timezone.clone().unwrap().to_string());
+    }
+
+    if !&params.lat.is_some() {
+        new_params.insert("LAT", original_lat);
+    } else {
+        new_params.insert("LAT", params.lat.clone().unwrap().to_string());
+    }
+
+    if !&params.long.is_some() {
+        new_params.insert("LONG", original_long);
+    } else {
+        new_params.insert("LONG", params.long.clone().unwrap().to_string());
+    }
+
+    if !&params.state.is_some() {
+        new_params.insert("STATE", original_state);
+    } else {
+        new_params.insert("STATE", params.state.clone().unwrap().to_string());
+    }
+
+    if !&params.zone.is_some() {
+        new_params.insert("ZONE", original_zone);
+    } else {
+        new_params.insert("ZONE", params.zone.clone().unwrap().to_string());
+    }
+
+    if !&params.temp_unit.is_some() {
+        new_params.insert("TEMPERATURE_UNIT", original_temp_unit);
+    } else {
+        new_params.insert("TEMPERATURE_UNIT", params.temp_unit.clone().unwrap().to_string());
+    }
+
+    if !&params.default_legacy.is_some() {
+        new_params.insert("DEFAULT_LEGACY", original_default_legacy);
+    } else {
+        new_params.insert("DEFAULT_LEGACY", params.default_legacy.clone().unwrap().to_string());
+    }
+
+    let file: PathBuf = dirs::config_dir()
+        .expect("update_config - Could not find config directory")
+        .join("Raijin")
+        .join(".env");
+
+    let file_data = format!(
+        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"\n",
+        new_params["ZONE"],
+        new_params["STATE"],
+        new_params["LAT"],
+        new_params["LONG"],
+        new_params["TIMEZONE"],
+        new_params["TEMPERATURE_UNIT"],
+        new_params["DEFAULT_LEGACY"],
+    );
+    fs::write(&file, file_data)?;
+
+    Ok(())
+}
+
+/// Check to see if STATE and ZONE are set so we can grab NWS data
+fn check_legacy_compliance() -> bool {
+    let env = get_env();
+    let state = env.get("STATE").unwrap().to_string();
+    let zone = env.get("ZONE").unwrap().to_string();
+    return zone != "" && state != "";
+}
+
+/// Grab the variables for the environment
+fn get_env() -> EnvMap {
+    let _ = configure();
+    let file = dirs::config_dir().expect("get_env - Could not find config directory").join("Raijin").join(".env");
+
+    return EnvLoader::with_path(&file).sequence(EnvSequence::EnvThenInput).load().expect("EnvLoader failed - Check .env existence");
+}
+
+/// Get data from OpenMeteo and NWS if compliant
+fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
+    let args = Args::parse();
+
+    match &args.command {
+        Some(Commands::Edit { timezone, lat, long, state, zone, temp_unit, default_legacy }) => {
+            let config_params = ConfigParams {
+                timezone: timezone.clone(),
+                lat: lat.clone(),
+                long: long.clone(),
+                state: state.clone(),
+                zone: zone.clone(),
+                temp_unit: temp_unit.clone(),
+                default_legacy: default_legacy.clone(),
+            };
+
+            let _ = update_config(config_params);
+        },
+        None => {}
+    }
 
     let data = include_str!("./weather-codes.json");
     let weather_codes: serde_json::Value = serde_json::from_str(&data).expect("JSON was malformed");
@@ -526,18 +1337,40 @@ fn main() -> io::Result<()> {
         .build();
 
     let agent = Agent::new_with_config(config);
-        
-    let nws_periods = get_nws_weather_periods(&agent).unwrap();
-    let today = nws_periods[0].detailed_forecast.clone();
-    let open_meteo_forecast = get_open_meteo_weather(&agent, weather_codes).unwrap();
-    let all_moon_phases = get_moon_phases(&agent, open_meteo_forecast.periods[0].date.clone()).unwrap(); 
 
-    let thing = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", all_moon_phases[3].phase)).unwrap();
-    let moon_phase_art = thing.contents_utf8().unwrap();
+    let is_legacy_compliant: bool = check_legacy_compliance();
+
+    // If the legacy variables aren't set, don't setup the "Right Now Details"
+    let mut today = None;
+    if is_legacy_compliant {
+        // let now = Instant::now();
+        let nws_periods = get_nws_weather_periods(&agent).unwrap();
+        // println!("nws_periods: {:.2?}", now.elapsed());
+        today = Some(nws_periods[0].detailed_forecast.clone());
+    }
+
+    // Get all the weather data
+    // let now = Instant::now();
+    let open_meteo_forecast = get_open_meteo_weather(&agent, weather_codes).unwrap();
+    // println!("openmeteo: {:.2?}", now.elapsed());
+
+    // Get the moon phase and use that to get the right art file
+    let phase_file = MOON_PHASE_ART_DIR.get_file(format!("{}.txt", get_moon_phase())).unwrap();
+    let moon_phase_art = phase_file.contents_utf8().unwrap();
+
+    return (today, open_meteo_forecast, moon_phase_art.to_string());
+}
+
+
+
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    let _ = assert_env_health();
     
     // Initialize the TUI
     let mut terminal = ratatui::init();
-    let app_result = App::default().run(&mut terminal, open_meteo_forecast, today, moon_phase_art.to_string());
+    let app_result = App::default().run(&mut terminal);
+
     // Restore the terminal before we leave
     ratatui::restore();
     app_result
