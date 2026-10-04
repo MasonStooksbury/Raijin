@@ -739,7 +739,7 @@ impl App {
         );
         let title = Line::from("LOADING").light_yellow().centered().bold();
         let content = "\nGrabbing weather data now...";
-        let popup = Paragraph::new(content).block(Block::bordered().title(title));
+        let popup = Paragraph::new(content).block(Block::bordered().title(title).padding(Padding::uniform(1)));
         frame.render_widget(Clear, area);
         frame.render_widget(popup, area);
     }
@@ -1015,7 +1015,7 @@ impl App {
             .join(".env");
 
         let file_data = format!(
-            "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"",
+            "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"\n",
             self.configuration_form.value(&Field::Zone).unwrap(),
             self.configuration_form.value(&Field::State).unwrap(),
             self.configuration_form.value(&Field::Latitude).unwrap(),
@@ -1197,7 +1197,7 @@ fn assert_env_health() -> Result<(), Box<dyn std::error::Error>> {
         .join(".env");
 
     let file_data = format!(
-        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"",
+        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"\n",
         zone,
         state,
         lat,
@@ -1272,7 +1272,7 @@ fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>>
         .join(".env");
 
     let file_data = format!(
-        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"",
+        "ZONE=\"{}\"\nSTATE=\"{}\"\nLATITUDE=\"{}\"\nLONGITUDE=\"{}\"\nTIMEZONE=\"{}\"\nTEMPERATURE_UNIT=\"{}\"\nDEFAULT_LEGACY=\"{}\"\n",
         new_params["ZONE"],
         new_params["STATE"],
         new_params["LAT"],

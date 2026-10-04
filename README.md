@@ -64,13 +64,13 @@ Installation via `cargo` can be done by installing the [Raijin](https://crates.i
 ```bash
 cargo install Raijin
 ```
-`NOTE: The default lat/long is somewhere in Tennessee. If you'd like to change it, continue on to the Configuration section below`
+`NOTE: The default lat/long is somewhere in Tennessee. If you'd like to change it, continue on to the Setup section below`
 
 <br>
 
 ## Usage
 
-Once you've completed the instructions below, run by typing `Raijin` in your terminal
+Once you've completed the instructions below, run by typing `Raijin` in your terminal (I have this aliased to just 'r' so I can run it quickly while I'm working)
 
 <br>
 
