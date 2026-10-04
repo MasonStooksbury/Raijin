@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::default::Default;
 use std::path::{PathBuf};
-// use std::time::Instant;
 use regex::Regex;
 use serde::{Serialize, Deserialize};
 use educe::Educe;
@@ -21,7 +20,6 @@ use ratatui::{
 use Constraint::{Percentage, Ratio};
 use ratiform::{Form, FormState, builder::FormBuilder, validators};
 use chrono::{NaiveDate, Datelike, DateTime, TimeZone, Timelike, Local};
-use dotenvy::{EnvLoader, EnvSequence, EnvMap};
 use dirs;
 use include_dir::{include_dir, Dir};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
@@ -1289,17 +1287,25 @@ fn update_config(params: ConfigParams) -> Result<(), Box<dyn std::error::Error>>
 /// Check to see if STATE and ZONE are set so we can grab NWS data
 fn check_legacy_compliance() -> bool {
     let env = get_env();
-    let state = env.get("STATE").unwrap().to_string();
-    let zone = env.get("ZONE").unwrap().to_string();
+    let state = &env["STATE"];
+    let zone = &env["ZONE"];
     return zone != "" && state != "";
 }
 
 /// Grab the variables for the environment
-fn get_env() -> EnvMap {
+fn get_env() -> HashMap<String, String> {
     let _ = configure();
     let file = dirs::config_dir().expect("get_env - Could not find config directory").join("Raijin").join(".env");
 
-    return EnvLoader::with_path(&file).sequence(EnvSequence::EnvThenInput).load().expect("EnvLoader failed - Check .env existence");
+    dotenvy::from_path_override(&file).expect("get_env - Could not load env file");
+    let mut vars = HashMap::new();
+    for (key, value) in dotenvy::vars().collect::<Vec<_>>() {
+        vars.insert(
+            key.clone(),
+            value.clone()
+        );
+    }
+    return vars;
 }
 
 /// Get data from OpenMeteo and NWS if compliant
@@ -1361,10 +1367,7 @@ fn get_data() -> (Option<String>, OpenMeteoForecast, String) {
     return (today, open_meteo_forecast, moon_phase_art.to_string());
 }
 
-
-
-#[tokio::main]
-async fn main() -> io::Result<()> {
+fn main() -> io::Result<()> {
     let _ = assert_env_health();
     
     // Initialize the TUI
